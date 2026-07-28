@@ -22,7 +22,7 @@ export const translateMessage = async (req, res) => {
     // 2. Detect Language
     const detectedLanguage = await detectLanguage(transcript);
 
-    const { targetLanguage } = req.body;
+    const targetLanguage = req.body.targetLanguage || "English";
 
     // 3. Translate
     const translatedText = await translateText(
