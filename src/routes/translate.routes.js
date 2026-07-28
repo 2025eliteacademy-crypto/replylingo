@@ -1,8 +1,8 @@
 import express from "express";
 import multer from "multer";
 
-// import auth from "../middleware/auth.js";
-// import usageLimit from "../middleware/usageLimit.js";
+import auth from "../middleware/auth.js";
+import usageLimit from "../middleware/usageLimit.js";
 import { translateMessage } from "../controllers/translate.controller.js";
 
 const router = express.Router();
@@ -14,8 +14,8 @@ const upload = multer({
 
 router.post(
   "/message",
-  // auth,
-  // usageLimit,
+  auth,
+  usageLimit,
   upload.single("audio"),
   translateMessage
 );
