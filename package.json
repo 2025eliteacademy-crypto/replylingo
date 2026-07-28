@@ -28,5 +28,11 @@
 
   "devDependencies": {
     "nodemon": "^3.1.14"
+  },
+
+  "overrides": {
+    "firebase-admin": {
+      "jwks-rsa": "3.1.0"
+    }
   }
 }
