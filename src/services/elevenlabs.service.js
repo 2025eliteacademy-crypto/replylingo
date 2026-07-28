@@ -1,7 +1,8 @@
 import axios from "axios";
-
-const VOICE_ID = process.env.ELEVENLABS_VOICE_ID || "JBFqnCBsd6RMkjVDRZzb";
-console.log("VOICE_ID:", VOICE_ID);
+import "dotenv/config";
+const VOICE_ID = process.env.ELEVENLABS_VOICE_ID;
+// const VOICE_ID = process.env.ELEVENLABS_VOICE_ID || "JBFqnCBsd6RMkjVDRZzb";
+// console.log("VOICE_ID:", VOICE_ID);
 
 export const generateSpeech = async (text) => {
   try {
