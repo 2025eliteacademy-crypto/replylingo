@@ -1,13 +1,19 @@
 import axios from "axios";
 import "dotenv/config";
-const VOICE_ID = process.env.ELEVENLABS_VOICE_ID;
-// const VOICE_ID = process.env.ELEVENLABS_VOICE_ID || "JBFqnCBsd6RMkjVDRZzb";
-// console.log("VOICE_ID:", VOICE_ID);
+import { resolveElevenLabsVoiceId } from "../config/voices.js";
 
-export const generateSpeech = async (text) => {
+/**
+ * @param {string} text
+ * @param {string} [voiceId] - the app-level voice id ("female" | "male"),
+ *   NOT a raw ElevenLabs id. Falls back to the default voice if omitted
+ *   or unrecognized.
+ */
+export const generateSpeech = async (text, voiceId) => {
+  const elevenLabsVoiceId = resolveElevenLabsVoiceId(voiceId);
+
   try {
     const response = await axios.post(
-      `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}`,
+      `https://api.elevenlabs.io/v1/text-to-speech/${elevenLabsVoiceId}`,
       {
         text,
         model_id: "eleven_multilingual_v2",
@@ -25,13 +31,13 @@ export const generateSpeech = async (text) => {
     return Buffer.from(response.data);
   } catch (error) {
     if (error.response?.data) {
-  console.error(
-    "ElevenLabs Error:",
-    Buffer.from(error.response.data).toString("utf8")
-  );
-} else {
-  console.error("ElevenLabs Error:", error.message);
-}
+      console.error(
+        "ElevenLabs Error:",
+        Buffer.from(error.response.data).toString("utf8")
+      );
+    } else {
+      console.error("ElevenLabs Error:", error.message);
+    }
 
     throw new Error("Failed to generate speech.");
   }

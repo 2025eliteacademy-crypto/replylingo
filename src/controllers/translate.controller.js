@@ -1,10 +1,11 @@
-
 import { transcribeAudio } from "../services/whisper.service.js";
 import {
   detectLanguage,
   translateText,
 } from "../services/openai.service.js";
 import { generateSpeech } from "../services/elevenlabs.service.js";
+import User from "../models/User.js";
+import { DEFAULT_VOICE_ID } from "../config/voices.js";
 
 export const translateMessage = async (req, res) => {
   try {
@@ -14,7 +15,6 @@ export const translateMessage = async (req, res) => {
         message: "Audio file is required.",
       });
     }
-
 
     // 1. Speech -> Text
     const transcript = await transcribeAudio(req.file.buffer);
@@ -31,10 +31,20 @@ export const translateMessage = async (req, res) => {
       targetLanguage
     );
 
-    // 4. Generate Speech
-    const audioBuffer = await generateSpeech(translatedText);
+    // 4. Look up the user's saved voice preference (falls back to default
+    // if they haven't picked one, or if the doc lookup fails for any reason)
+    let voiceId = DEFAULT_VOICE_ID;
+    try {
+      const user = await User.findOne({ uid: req.user.uid }).select("voiceId");
+      if (user?.voiceId) voiceId = user.voiceId;
+    } catch (voiceLookupError) {
+      console.error("Voice preference lookup failed, using default:", voiceLookupError);
+    }
 
-    // 5. Increase usage count
+    // 5. Generate Speech
+    const audioBuffer = await generateSpeech(translatedText, voiceId);
+
+    // 6. Increase usage count
     req.usage.translationsUsed += 1;
     await req.usage.save();
 

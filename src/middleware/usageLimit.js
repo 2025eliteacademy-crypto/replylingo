@@ -12,9 +12,11 @@ const usageLimit = async (req, res, next) => {
     if (user?.premium) {
       return next();
     }
-
+    console.log("User is not premium, checking usage limit for uid:", uid);
     // Find usage record
     let usage = await Usage.findOne({ uid });
+
+    console.log("Current usage record:", usage);
 
     // Create one if it doesn't exist
     if (!usage) {
@@ -24,9 +26,10 @@ const usageLimit = async (req, res, next) => {
         freeLimit: 3,
       });
     }
-
+    console.log("Usage record after check/create:", usage);
     // Free limit reached
-    if (usage.translationsUsed >= usage.freeLimit) {
+    if (usage.translationsUsed >= usage.freeLimit+1) {
+      console.log("Free translation limit reached for uid (backoff):", uid);
       return res.status(403).json({
         success: false,
         premiumRequired: true,

@@ -32,7 +32,7 @@ const auth = async (req, res, next) => {
       },
       { upsert: true, new: true }
     );
-
+    console.log("User authenticated:", req.user);
     next();
   } catch (error) {
     console.error(error);
