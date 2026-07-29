@@ -43,11 +43,14 @@ export const translateMessage = async (req, res) => {
 
     console.log("VOICE USED:", voiceId);
     // 5. Generate Speech
-    const audioBuffer = await generateSpeech(translatedText, voiceId);
+const audioBuffer = await generateSpeech(translatedText, voiceId);
 
-    // 6. Increase usage count
-    req.usage.translationsUsed += 1;
-    await req.usage.save();
+const usageCost =
+  req.body.screen === "translate" ? 0.5 : 1;
+
+req.usage.usageCredits += usageCost;
+
+await req.usage.save();
 
     return res.json({
       success: true,
@@ -55,8 +58,10 @@ export const translateMessage = async (req, res) => {
       detectedLanguage,
       translatedText,
       audio: audioBuffer.toString("base64"),
-      remainingFreeTranslations:
-        req.usage.freeLimit - req.usage.translationsUsed,
+      remainingFreeTranslations: Math.max(
+  0,
+  req.usage.freeLimit - req.usage.usageCredits
+),
     });
   } catch (error) {
     console.error(error);

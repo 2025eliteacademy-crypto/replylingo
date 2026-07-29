@@ -21,14 +21,14 @@ const usageLimit = async (req, res, next) => {
     // Create one if it doesn't exist
     if (!usage) {
       usage = await Usage.create({
-        uid,
-        translationsUsed: 0,
-        freeLimit: 3,
-      });
+  uid,
+  usageCredits: 0,
+  freeLimit: 3,
+});
     }
     console.log("Usage record after check/create:", usage);
     // Free limit reached
-    if (usage.translationsUsed >= usage.freeLimit+1) {
+    if (usage.usageCredits >= usage.freeLimit) {
       console.log("Free translation limit reached for uid (backoff):", uid);
       return res.status(403).json({
         success: false,

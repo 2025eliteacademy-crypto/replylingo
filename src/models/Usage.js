@@ -8,15 +8,15 @@ const usageSchema = new mongoose.Schema(
       unique: true,
     },
 
-    translationsUsed: {
-      type: Number,
-      default: 0,
-    },
+usageCredits: {
+  type: Number,
+  default: 0,
+},
 
-    freeLimit: {
-      type: Number,
-      default: 3,
-    },
+freeLimit: {
+  type: Number,
+  default: 3,
+},
 
     lastReset: {
       type: Date,
