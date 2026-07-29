@@ -3,7 +3,24 @@ import { getVoiceMap, DEFAULT_VOICE_ID } from "../config/voices.js";
 
 const getMe = async (req, res) => {
   try {
-    const user = await User.findOne({ uid: req.user.uid });
+    const user = await User.findOneAndUpdate(
+  { uid: req.user.uid },
+  {
+    $setOnInsert: {
+      uid: req.user.uid,
+      email: req.user.email ?? null,
+      guest:
+          req.user.firebase?.sign_in_provider === "anonymous" ||
+          req.user.provider_id === "anonymous",
+    },
+  },
+  {
+  upsert: true,
+  returnDocument: "after",
+}
+);
+
+console.log(user);
 
     res.status(200).json({
       success: true,
