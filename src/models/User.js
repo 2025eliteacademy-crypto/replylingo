@@ -22,6 +22,10 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    voiceId: {
+  type: String,
+  default: "male",
+},
   },
   {
     timestamps: true,

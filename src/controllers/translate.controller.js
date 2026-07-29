@@ -41,6 +41,7 @@ export const translateMessage = async (req, res) => {
       console.error("Voice preference lookup failed, using default:", voiceLookupError);
     }
 
+    console.log("VOICE USED:", voiceId);
     // 5. Generate Speech
     const audioBuffer = await generateSpeech(translatedText, voiceId);
 
