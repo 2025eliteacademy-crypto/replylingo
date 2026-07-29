@@ -1,4 +1,5 @@
 import User from "../models/User.js";
+import Usage from "../models/Usage.js";
 import { getVoiceMap, DEFAULT_VOICE_ID } from "../config/voices.js";
 
 const getMe = async (req, res) => {
@@ -20,7 +21,10 @@ const getMe = async (req, res) => {
 }
 );
 
+const usage = await Usage.findOne({ uid: req.user.uid });
+
 console.log(user);
+
 
     res.status(200).json({
       success: true,
@@ -31,6 +35,10 @@ console.log(user);
         guest: user?.guest ?? false,
         premium: user?.premium ?? false,
         voiceId: user?.voiceId ?? DEFAULT_VOICE_ID,
+
+remainingFreeTranslations: usage
+  ? Math.max(0, usage.freeLimit - usage.usageCredits)
+  : 3,
       },
     });
   } catch (error) {
