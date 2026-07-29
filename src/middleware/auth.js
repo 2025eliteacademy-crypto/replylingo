@@ -1,4 +1,5 @@
 import { getAuth } from "firebase-admin/auth";
+import User from "../models/User.js";
 
 const auth = async (req, res, next) => {
   try {
@@ -16,6 +17,21 @@ const auth = async (req, res, next) => {
     const decodedToken = await getAuth().verifyIdToken(idToken);
 
     req.user = decodedToken;
+
+    // Create the user doc on first request, or just note their existence.
+    // This runs on every request, but findOneAndUpdate with upsert is a
+    // single cheap indexed query — negligible overhead.
+    await User.findOneAndUpdate(
+      { uid: decodedToken.uid },
+      {
+        $setOnInsert: {
+          uid: decodedToken.uid,
+          email: decodedToken.email || null,
+          guest: decodedToken.firebase?.sign_in_provider === "anonymous",
+        },
+      },
+      { upsert: true, new: true }
+    );
 
     next();
   } catch (error) {
