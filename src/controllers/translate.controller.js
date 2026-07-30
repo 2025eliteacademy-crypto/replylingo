@@ -34,23 +34,29 @@ export const translateMessage = async (req, res) => {
     // 4. Look up the user's saved voice preference (falls back to default
     // if they haven't picked one, or if the doc lookup fails for any reason)
     let voiceId = DEFAULT_VOICE_ID;
+    let isPremium = false;
     try {
-      const user = await User.findOne({ uid: req.user.uid }).select("voiceId");
+      const user = await User.findOne({ uid: req.user.uid }).select("voiceId premium");
       if (user?.voiceId) voiceId = user.voiceId;
+      isPremium = user?.premium ?? false;
     } catch (voiceLookupError) {
       console.error("Voice preference lookup failed, using default:", voiceLookupError);
     }
 
     console.log("VOICE USED:", voiceId);
-    // 5. Generate Speech
-const audioBuffer = await generateSpeech(translatedText, voiceId);
+    const audioBuffer = await generateSpeech(translatedText, voiceId);
 
-const usageCost =
-  req.body.screen === "translate" ? 0.5 : 1;
+    let remainingFreeTranslations = null;
 
-req.usage.usageCredits += usageCost;
-
-await req.usage.save();
+    if (!isPremium && req.usage) {
+      const usageCost = req.body.screen === "translate" ? 0.5 : 1;
+      req.usage.usageCredits += usageCost;
+      await req.usage.save();
+      remainingFreeTranslations = Math.max(
+        0,
+        req.usage.freeLimit - req.usage.usageCredits
+      );
+    }
 
     return res.json({
       success: true,
@@ -58,10 +64,7 @@ await req.usage.save();
       detectedLanguage,
       translatedText,
       audio: audioBuffer.toString("base64"),
-      remainingFreeTranslations: Math.max(
-  0,
-  req.usage.freeLimit - req.usage.usageCredits
-),
+      remainingFreeTranslations,
     });
   } catch (error) {
     console.error(error);

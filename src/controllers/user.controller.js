@@ -1,6 +1,7 @@
 import User from "../models/User.js";
 import Usage from "../models/Usage.js";
 import { getVoiceMap, DEFAULT_VOICE_ID } from "../config/voices.js";
+import { getSubscriberPremiumStatus } from "../services/revenuecat.service.js";
 
 const getMe = async (req, res) => {
   try {
@@ -88,4 +89,36 @@ console.log("VOICE FIELD:", user?.voiceId);
   }
 };
 
-export { getMe, updateVoice };
+const syncPremium = async (req, res) => {
+  try {
+    const uid = req.user.uid;
+    const premium = await getSubscriberPremiumStatus(uid);
+
+    const user = await User.findOneAndUpdate(
+      { uid },
+      { $set: { premium } },
+      { upsert: true, returnDocument: "after" }
+    );
+
+    res.status(200).json({
+      success: true,
+      premium: user.premium,
+    });
+  } catch (error) {
+    console.error("[syncPremium] Error:", error);
+
+    if (error.code === "REVENUECAT_NOT_CONFIGURED") {
+      return res.status(503).json({
+        success: false,
+        message: "Premium sync is temporarily unavailable.",
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to sync premium status.",
+    });
+  }
+};
+
+export { getMe, updateVoice, syncPremium };
