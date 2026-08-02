@@ -121,4 +121,31 @@ const syncPremium = async (req, res) => {
   }
 };
 
-export { getMe, updateVoice, syncPremium };
+const deleteAccount = async (req, res) => {
+  try {
+    const uid = req.user.uid;
+
+    console.log(`[deleteAccount] Starting deletion for user: ${uid}`);
+
+    // Delete User document
+    const userDeleteResult = await User.deleteOne({ uid });
+    console.log(`[deleteAccount] User deletion result:`, userDeleteResult);
+
+    // Delete Usage document
+    const usageDeleteResult = await Usage.deleteOne({ uid });
+    console.log(`[deleteAccount] Usage deletion result:`, usageDeleteResult);
+
+    res.status(200).json({
+      success: true,
+      message: "Account deleted successfully",
+    });
+  } catch (error) {
+    console.error("[deleteAccount] Error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to delete account",
+    });
+  }
+};
+
+export { getMe, updateVoice, syncPremium, deleteAccount };
