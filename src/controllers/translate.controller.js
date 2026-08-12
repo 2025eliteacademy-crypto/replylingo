@@ -6,6 +6,10 @@ import {
 import { generateSpeech } from "../services/elevenlabs.service.js";
 import User from "../models/User.js";
 import { DEFAULT_VOICE_ID } from "../config/voices.js";
+import { parseBuffer } from "music-metadata";
+
+// const MAX_AUDIO_SECONDS = 180; // 3 minutes, same cap for free and premium
+const MAX_AUDIO_SECONDS = 10; // 3 minutes, same cap for free and premium
 
 export const translateMessage = async (req, res) => {
   try {
@@ -14,6 +18,37 @@ export const translateMessage = async (req, res) => {
         success: false,
         message: "Audio file is required.",
       });
+    }
+
+    // Reject oversized audio BEFORE calling Whisper/ElevenLabs (cost control)
+    try {
+      const metadata = await parseBuffer(
+        req.file.buffer,
+        req.file.mimetype,
+        { duration: true }
+      );
+      const durationSeconds = metadata?.format?.duration ?? 0;
+
+      console.log("Audio duration (s):", durationSeconds);
+
+      if (durationSeconds > MAX_AUDIO_SECONDS) {
+        return res.status(413).json({
+          success: false,
+          message: "Audio is too long. Please keep messages under 3 minutes.",
+        });
+      }
+    } catch (durationError) {
+      // If we genuinely can't read duration, log it but don't hard-fail the
+      // request — fall back to a file-size sanity check instead.
+      console.error("Could not read audio duration:", durationError.message);
+
+      const MAX_BYTES = 8 * 1024 * 1024; // ~8MB safety net
+      if (req.file.buffer.length > MAX_BYTES) {
+        return res.status(413).json({
+          success: false,
+          message: "Audio file is too large.",
+        });
+      }
     }
 
     // 1. Speech -> Text

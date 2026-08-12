@@ -4,13 +4,10 @@
   "description": "",
   "main": "index.js",
   "type": "module",
-
-
   "scripts": {
     "dev": "nodemon index.js",
     "start": "node index.js"
   },
-
   "dependencies": {
     "axios": "^1.18.1",
     "cors": "^2.8.6",
@@ -19,14 +16,13 @@
     "firebase-admin": "^14.2.0",
     "mongoose": "^9.8.1",
     "multer": "^2.2.0",
+    "music-metadata": "^11.14.0",
     "openai": "^7.0.0",
     "uuid": "^14.0.1"
   },
-
   "devDependencies": {
     "nodemon": "^3.1.14"
   },
-
   "overrides": {
     "firebase-admin": {
       "jwks-rsa": "3.1.0"
