@@ -48,14 +48,17 @@ export const translateMessage = async (req, res) => {
 
     let remainingFreeTranslations = null;
 
-    if (!isPremium && req.usage) {
+    if (req.usage) {
       const usageCost = req.body.screen === "translate" ? 0.5 : 1;
       req.usage.usageCredits += usageCost;
       await req.usage.save();
-      remainingFreeTranslations = Math.max(
-        0,
-        req.usage.freeLimit - req.usage.usageCredits
-      );
+
+      if (!isPremium) {
+        remainingFreeTranslations = Math.max(
+          0,
+          req.usage.freeLimit - req.usage.usageCredits
+        );
+      }
     }
 
     return res.json({
