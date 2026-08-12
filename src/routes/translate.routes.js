@@ -10,6 +10,9 @@ const router = express.Router();
 // Store uploaded audio temporarily in uploads/
 const upload = multer({
   storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 15 * 1024 * 1024, // ~15MB hard ceiling, well above a real 3-min clip
+  },
 });
 
 router.post(
