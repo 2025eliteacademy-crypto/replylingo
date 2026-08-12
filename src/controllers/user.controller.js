@@ -37,9 +37,11 @@ console.log(user);
         premium: user?.premium ?? false,
         voiceId: user?.voiceId ?? DEFAULT_VOICE_ID,
 
-remainingFreeTranslations: usage
-  ? Math.max(0, usage.freeLimit - usage.usageCredits)
-  : 3,
+remainingFreeTranslations: user?.premium
+  ? null
+  : usage
+    ? Math.max(0, usage.freeLimit - usage.usageCredits)
+    : 3,
       },
     });
   } catch (error) {
