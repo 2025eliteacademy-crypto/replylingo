@@ -1,7 +1,7 @@
 // import axios from "axios";
 
 // const REVENUECAT_API_BASE = "https://api.revenuecat.com/v2";
-// const ENTITLEMENT_ID = "ReplyLingo Pro";
+// const ENTITLEMENT_ID = "entl5916853415";
 
 // function isEntitlementActive(entitlement) {
 //   if (!entitlement) return false;
@@ -85,7 +85,7 @@
 //     );
 
 //     const activeEntitlements =
-//       response.data?.active_entitlements?.items ?? [];
+//       response.data?.items ?? [];
 
 //     const entitlement = activeEntitlements.find(
 //       (item) => item.entitlement_id === ENTITLEMENT_ID
@@ -152,8 +152,12 @@ export async function getSubscriberPremiumStatus(appUserId) {
       JSON.stringify(response.data, null, 2)
     );
 
-    const activeEntitlements =
-      response.data?.active_entitlements?.items ?? [];
+    const activeEntitlements = response.data?.items ?? [];
+      
+    console.log("[RevenueCat] Parsed activeEntitlements array:", activeEntitlements);
+    console.log("[RevenueCat] Entitlement IDs returned:", activeEntitlements.map(i => i.entitlement_id));
+    console.log("[RevenueCat] ENTITLEMENT_ID being matched against:", ENTITLEMENT_ID);
+
 
     const entitlement = activeEntitlements.find(
       (item) => item.entitlement_id === ENTITLEMENT_ID
