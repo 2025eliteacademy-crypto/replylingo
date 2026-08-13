@@ -31,6 +31,7 @@ const usageLimit = async (req, res, next) => {
         return res.status(429).json({
           success: false,
           message: "Please try again later.",
+          errorCode: "DAILY_LIMIT_REACHED",
         });
       }
       req.usage = usage;
