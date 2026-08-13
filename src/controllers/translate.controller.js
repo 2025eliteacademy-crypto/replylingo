@@ -9,7 +9,7 @@ import { DEFAULT_VOICE_ID } from "../config/voices.js";
 import { parseBuffer } from "music-metadata";
 
 // const MAX_AUDIO_SECONDS = 180; // 3 minutes, same cap for free and premium
-const MAX_AUDIO_SECONDS = 60; // 2 minutes, same cap for free and premium
+const MAX_AUDIO_SECONDS = 60; // 1 minutes, same cap for free and premium
 
 export const translateMessage = async (req, res) => {
   try {
