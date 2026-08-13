@@ -37,17 +37,22 @@ export const detectLanguage = async (text) => {
 export const translateText = async (
   text,
   sourceLanguage,
-  targetLanguage
+  targetLanguage,
+  options = {}
 ) => {
   const openai = getOpenAIClient();
 
   try {
+    const conciseInstruction = options.concise
+      ? " Keep the translation brief and natural — trim filler, don't pad it out."
+      : "";
+
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
-          content: `Translate from ${sourceLanguage} to ${targetLanguage}. Return ONLY the translated text. Do not explain anything.`,
+          content: `Translate from ${sourceLanguage} to ${targetLanguage}. Return ONLY the translated text. Do not explain anything.${conciseInstruction}`,
         },
         {
           role: "user",

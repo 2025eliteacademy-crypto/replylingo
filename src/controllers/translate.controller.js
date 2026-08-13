@@ -9,7 +9,7 @@ import { DEFAULT_VOICE_ID } from "../config/voices.js";
 import { parseBuffer } from "music-metadata";
 
 // const MAX_AUDIO_SECONDS = 180; // 3 minutes, same cap for free and premium
-const MAX_AUDIO_SECONDS = 120; // 3 minutes, same cap for free and premium
+const MAX_AUDIO_SECONDS = 10; // 2 minutes, same cap for free and premium
 
 export const translateMessage = async (req, res) => {
   try {
@@ -34,7 +34,8 @@ export const translateMessage = async (req, res) => {
       if (durationSeconds > MAX_AUDIO_SECONDS) {
         return res.status(413).json({
           success: false,
-          message: "Audio is too long. Please keep messages under 3 minutes.",
+          message: "Audio is too long. Please keep messages under 2 minutes.",
+errorCode: "AUDIO_TOO_LONG",
         });
       }
     } catch (durationError) {
@@ -63,7 +64,8 @@ export const translateMessage = async (req, res) => {
     const translatedText = await translateText(
       transcript,
       detectedLanguage,
-      targetLanguage
+      targetLanguage,
+      { concise: durationSeconds > 60 }
     );
 
     // 4. Look up the user's saved voice preference (falls back to default
