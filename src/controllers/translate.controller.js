@@ -4,12 +4,22 @@ import {
   translateText,
 } from "../services/openai.service.js";
 import { generateSpeech } from "../services/elevenlabs.service.js";
+import { getBrandingOutroBuffer } from "../services/brandingOutro.service.js";
 import User from "../models/User.js";
 import { DEFAULT_VOICE_ID } from "../config/voices.js";
 import { parseBuffer } from "music-metadata";
 
 // const MAX_AUDIO_SECONDS = 180; // 3 minutes, same cap for free and premium
 const MAX_AUDIO_SECONDS = 60; // 1 minutes, same cap for free and premium
+
+// Directional per-call AI cost estimate (Whisper transcription + GPT
+// translation + ElevenLabs TTS combined), from the earlier business
+// audit's ~$0.04/call figure. This is NOT wired up to real OpenAI/
+// ElevenLabs billing — it's a rough constant for relative free-vs-premium
+// cost comparison until real per-provider usage-based pricing is plugged
+// in here (e.g. actual token counts * model price, actual audio seconds *
+// ElevenLabs per-character/second rate).
+const ESTIMATED_COST_PER_CALL_USD = 0.04;
 
 export const translateMessage = async (req, res) => {
   try {
@@ -84,11 +94,36 @@ errorCode: "AUDIO_TOO_LONG",
     console.log("VOICE USED:", voiceId);
     const audioBuffer = await generateSpeech(translatedText, voiceId);
 
+    // Spoken branding tag: appended only to the audio that's actually
+    // destined to be shared back out (the reply leg — the client marks
+    // this with `isReply`), and only for free-tier users. The inbound,
+    // listen-only translation is never shared, so it's never branded —
+    // and Pro users' audio is never touched. The original `audioBuffer`
+    // is left untouched either way; a *new* buffer is built when branding
+    // applies, matching the "never modify in place" requirement.
+    const isReply = req.body.isReply === "true" || req.body.isReply === true;
+    let finalAudioBuffer = audioBuffer;
+    let branded = false;
+
+    if (isReply && !isPremium) {
+      try {
+        const outroBuffer = await getBrandingOutroBuffer();
+        finalAudioBuffer = Buffer.concat([audioBuffer, outroBuffer]);
+        branded = true;
+      } catch (brandingError) {
+        // Branding is a nice-to-have on top of the core translation —
+        // never let it block the user from getting their translated reply.
+        console.error("Failed to append branding outro, sharing unbranded audio:", brandingError);
+        finalAudioBuffer = audioBuffer;
+      }
+    }
+
     let remainingFreeTranslations = null;
 
     if (req.usage) {
       const usageCost = req.body.screen === "translate" ? 0.5 : 1;
       req.usage.usageCredits += usageCost;
+      req.usage.estimatedCostUsd = (req.usage.estimatedCostUsd || 0) + ESTIMATED_COST_PER_CALL_USD;
       await req.usage.save();
 
       if (!isPremium) {
@@ -104,7 +139,8 @@ errorCode: "AUDIO_TOO_LONG",
       transcript,
       detectedLanguage,
       translatedText,
-      audio: audioBuffer.toString("base64"),
+      audio: finalAudioBuffer.toString("base64"),
+      branded,
       remainingFreeTranslations,
     });
   } catch (error) {

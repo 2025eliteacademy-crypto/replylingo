@@ -5,6 +5,12 @@ import { getSubscriberPremiumStatus } from "../services/revenuecat.service.js";
 
 const getMe = async (req, res) => {
   try {
+    // Checked before the upsert below purely so the response can tell the
+    // client whether this call just created the account (signup) or found
+    // an existing one (login) — used for analytics only, no behavior here
+    // depends on it.
+    const existingUser = await User.findOne({ uid: req.user.uid }).select("_id").lean();
+
     const user = await User.findOneAndUpdate(
   { uid: req.user.uid },
   {
@@ -29,6 +35,7 @@ console.log(user);
 
     res.status(200).json({
       success: true,
+      isNewUser: !existingUser,
       user: {
         uid: req.user.uid,
         email: user?.email ?? req.user.email ?? null,
