@@ -1,38 +1,58 @@
 import { generateSpeech } from "./elevenlabs.service.js";
+import { translateText } from "./openai.service.js";
 import { DEFAULT_VOICE_ID } from "../config/voices.js";
 
 // The spoken branding tag appended to free-tier outbound replies (see
-// translate.controller.js). The phrase never changes, so it's generated
-// once via ElevenLabs and cached in memory for the life of the process —
-// no reason to pay for/wait on a fresh TTS call per share. A fixed voice
-// (rather than the sender's chosen voice) keeps it a consistent, recognizable
-// "brand voice" independent of whichever voice the user picked.
+// translate.controller.js). It must be spoken in the reply's target
+// language — the recipient hears it, not the sender — so it's translated
+// via the same GPT pipeline used for the message itself, then cached per
+// language (keyed by the normalized target language name) so each
+// language only ever pays for one GPT translation + one ElevenLabs TTS
+// call, no matter how many shares happen afterwards.
 //
 // A leading "..." was tried to induce a pause but caused ElevenLabs to
 // mis-articulate "Sent" as "Assent"/"Ascent" in ~50% of generations
-// (confirmed via repeated Whisper-transcription testing). A leading "."
-// gives the same pause without the artifact — 3/3 clean in testing.
-const OUTRO_TEXT = ". Sent with ReplyLingo.";
+// (confirmed via repeated Whisper-transcription testing, English only).
+// A leading "." gives the same pause without the artifact — 3/3 clean in
+// testing. Carried over to every language; re-verify by ear for languages
+// where this turns out to read oddly.
+const OUTRO_SOURCE_TEXT = "Sent with ReplyLingo.";
+const OUTRO_SOURCE_LANGUAGE = "English";
 
-let cachedOutroBuffer = null;
-let pendingOutroPromise = null;
+const cachedOutroBuffers = new Map();
+const pendingOutroPromises = new Map();
 
-export async function getBrandingOutroBuffer() {
-  if (cachedOutroBuffer) return cachedOutroBuffer;
+export async function getBrandingOutroBuffer(targetLanguage) {
+  const language = (targetLanguage || OUTRO_SOURCE_LANGUAGE).trim();
+  const cacheKey = language.toLowerCase();
 
-  if (!pendingOutroPromise) {
-    pendingOutroPromise = generateSpeech(OUTRO_TEXT, DEFAULT_VOICE_ID)
+  if (cachedOutroBuffers.has(cacheKey)) {
+    return cachedOutroBuffers.get(cacheKey);
+  }
+
+  if (!pendingOutroPromises.has(cacheKey)) {
+    const promise = (async () => {
+      const outroText =
+        cacheKey === OUTRO_SOURCE_LANGUAGE.toLowerCase()
+          ? `. ${OUTRO_SOURCE_TEXT}`
+          : `. ${await translateText(OUTRO_SOURCE_TEXT, OUTRO_SOURCE_LANGUAGE, language)}`;
+
+      return generateSpeech(outroText, DEFAULT_VOICE_ID);
+    })()
       .then((buffer) => {
-        cachedOutroBuffer = buffer;
+        cachedOutroBuffers.set(cacheKey, buffer);
         return buffer;
       })
       .catch((err) => {
         // Don't poison the cache on a transient failure — the next call
-        // (e.g. the next free-tier share) gets to retry from scratch.
-        pendingOutroPromise = null;
+        // (e.g. the next free-tier share in this language) gets to retry
+        // from scratch.
+        pendingOutroPromises.delete(cacheKey);
         throw err;
       });
+
+    pendingOutroPromises.set(cacheKey, promise);
   }
 
-  return pendingOutroPromise;
+  return pendingOutroPromises.get(cacheKey);
 }

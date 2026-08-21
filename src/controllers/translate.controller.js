@@ -107,7 +107,7 @@ errorCode: "AUDIO_TOO_LONG",
 
     if (isReply && !isPremium) {
       try {
-        const outroBuffer = await getBrandingOutroBuffer();
+        const outroBuffer = await getBrandingOutroBuffer(targetLanguage);
         finalAudioBuffer = Buffer.concat([audioBuffer, outroBuffer]);
         branded = true;
       } catch (brandingError) {
