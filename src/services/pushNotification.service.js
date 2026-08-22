@@ -2,6 +2,11 @@ import { Expo } from "expo-server-sdk";
 import User from "../models/User.js";
 import CronState from "../models/CronState.js";
 
+// Must match ANDROID_NOTIFICATION_CHANNEL_ID in ReplyLingo-Mobile/src/utils/pushNotifications.js.
+// Android ignores per-notification sound on API 26+ — it's the channel's sound
+// that plays, so this has to point at a channel the client actually created.
+const ANDROID_NOTIFICATION_CHANNEL_ID = "default-v2";
+
 const INACTIVE_DAYS = 3; // nudge users who haven't opened the app in this long
 const RESEND_GAP_DAYS = 3; // don't nudge the same user more than this often
 const MIN_HOURS_BETWEEN_RUNS = 20; // lets an uptime monitor ping often without double-sending
@@ -50,7 +55,9 @@ async function sendPushNotification({ uid, token, title, body }) {
 
   let tickets;
   try {
-    tickets = await expo.sendPushNotificationsAsync([{ to: token, sound: "default", title, body }]);
+    tickets = await expo.sendPushNotificationsAsync([
+      { to: token, sound: "default", title, body, channelId: ANDROID_NOTIFICATION_CHANNEL_ID },
+    ]);
   } catch (error) {
     console.error(`[push] Failed to notify ${uid}:`, error.message);
     return { ok: false, code: error.code || "send-error", message: error.message };
@@ -166,6 +173,7 @@ export async function sendAnnouncementPushToAllUsers({ title, body }) {
     title,
     body,
     priority: "high",
+    channelId: ANDROID_NOTIFICATION_CHANNEL_ID,
   }));
 
   const chunks = expo.chunkPushNotifications(messages);
