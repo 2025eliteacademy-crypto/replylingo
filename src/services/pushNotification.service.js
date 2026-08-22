@@ -8,14 +8,16 @@ const MIN_HOURS_BETWEEN_RUNS = 20; // lets an uptime monitor ping often without 
 
 // Sends one push notification. Fails safe — a bad/expired token clears
 // itself from the user doc instead of throwing, since a dead token just
-// means the app was uninstalled or reinstalled with a new one.
+// means the app was uninstalled or reinstalled with a new one. Returns the
+// FCM error code/message on failure so callers can surface a real reason
+// instead of a bare boolean.
 async function sendPushNotification({ uid, token, title, body }) {
   try {
     await getMessaging().send({
       token,
       notification: { title, body },
     });
-    return true;
+    return { ok: true };
   } catch (error) {
     const code = error?.errorInfo?.code || error?.code;
     if (code === "messaging/registration-token-not-registered" || code === "messaging/invalid-argument") {
@@ -23,7 +25,7 @@ async function sendPushNotification({ uid, token, title, body }) {
     } else {
       console.error(`[push] Failed to notify ${uid}:`, error.message);
     }
-    return false;
+    return { ok: false, code, message: error.message };
   }
 }
 
@@ -64,13 +66,13 @@ export async function runReengagementBatch() {
 
   let sent = 0;
   for (const user of candidates) {
-    const ok = await sendPushNotification({
+    const result = await sendPushNotification({
       uid: user.uid,
       token: user.pushToken,
       title: "Got a voice note waiting?",
       body: "Share it into ReplyLingo and hear it translated in seconds.",
     });
-    if (ok) {
+    if (result.ok) {
       await User.updateOne({ uid: user.uid }, { $set: { lastReengagementSentAt: new Date() } });
       sent += 1;
     }
@@ -92,12 +94,12 @@ export async function sendTestNotification(uid) {
     return { ok: false, reason: "user has no pushToken saved" };
   }
 
-  const ok = await sendPushNotification({
+  const result = await sendPushNotification({
     uid: user.uid,
     token: user.pushToken,
     title: "Test notification",
     body: "If you're seeing this, push notifications are working.",
   });
 
-  return { ok };
+  return result;
 }
