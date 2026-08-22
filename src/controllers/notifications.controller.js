@@ -1,11 +1,12 @@
 import { runReengagementBatch } from "../services/pushNotification.service.js";
 
-// POST /api/notifications/reengagement — meant to be pinged on a schedule
-// by an external monitor (e.g. UptimeRobot), not called by the app.
+// GET /api/notifications/reengagement?secret=... — meant to be pinged on a
+// schedule by an external monitor (e.g. UptimeRobot's free plan, which only
+// supports plain GET requests, not custom headers), not called by the app.
 // Protected by a shared secret rather than user auth, since there's no
 // signed-in user making this request.
 const triggerReengagement = async (req, res) => {
-  const provided = req.headers["x-cron-secret"];
+  const provided = req.query.secret;
 
   if (!process.env.CRON_SECRET) {
     console.error("[notifications] CRON_SECRET is not set — refusing to run.");
