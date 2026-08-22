@@ -1,5 +1,9 @@
 import express from "express";
-import { triggerReengagement, triggerTestNotification } from "../controllers/notifications.controller.js";
+import {
+  triggerReengagement,
+  triggerTestNotification,
+  triggerAnnouncement,
+} from "../controllers/notifications.controller.js";
 
 const router = express.Router();
 
@@ -12,5 +16,10 @@ router.get("/reengagement", triggerReengagement);
 
 // Manual delivery check during development — sends to one uid immediately.
 router.get("/test", triggerTestNotification);
+
+// Admin-triggered broadcast to every user with a push token. POST with
+// {title, body} in the JSON body — ?secret=... still required, same as
+// the other two endpoints.
+router.post("/announcement", triggerAnnouncement);
 
 export default router;

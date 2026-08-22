@@ -172,14 +172,13 @@ const syncPremium = async (req, res) => {
 };
 
 // POST /api/user/push-token
-// body: { pushToken: string | null, platform?: "ios" | "android", environment?: "development" | "production" }
-// Pass pushToken: null to clear (e.g. user turned notifications off) — platform/environment are cleared with it.
-// platform/environment are required when saving a token: they're how the backend picks Firebase Admin (android)
-// vs. direct Apple APNs (ios), and which APNs host to use (see pushNotification.service.js / config/apns.js).
+// body: { pushToken: string | null, platform?: "ios" | "android" }
+// Pass pushToken: null to clear (e.g. user turned notifications off) — platform is cleared with it.
+// pushToken is an Expo push token; platform is stored for informational/debugging purposes
+// only — Expo's push service resolves iOS/Android delivery itself (see pushNotification.service.js).
 const savePushToken = async (req, res) => {
   try {
-    const { pushToken, platform, environment } = req.body;
-    console.log("[push-token][DEBUG] uid:", req.user.uid, "platform:", platform, "environment:", environment, "token:", pushToken);
+    const { pushToken, platform } = req.body;
 
     if (pushToken !== null && typeof pushToken !== "string") {
       return res.status(400).json({
@@ -188,30 +187,18 @@ const savePushToken = async (req, res) => {
       });
     }
 
-    if (pushToken && !["ios", "android"].includes(platform)) {
+    if (pushToken && platform && !["ios", "android"].includes(platform)) {
       return res.status(400).json({
         success: false,
-        message: 'platform must be "ios" or "android" when saving a pushToken.',
-      });
-    }
-
-    if (platform === "ios" && environment && !["development", "production"].includes(environment)) {
-      return res.status(400).json({
-        success: false,
-        message: 'environment must be "development" or "production".',
+        message: 'platform must be "ios" or "android" when provided.',
       });
     }
 
     const update = pushToken
-      ? { pushToken, pushPlatform: platform, pushEnvironment: platform === "ios" ? environment || "development" : null }
-      : { pushToken: null, pushPlatform: null, pushEnvironment: null };
+      ? { pushToken, pushPlatform: platform || null }
+      : { pushToken: null, pushPlatform: null };
 
-    const updated = await User.findOneAndUpdate(
-      { uid: req.user.uid },
-      { $set: update },
-      { upsert: true, new: true }
-    );
-    console.log("[push-token][DEBUG] persisted:", updated.pushToken, updated.pushPlatform, updated.pushEnvironment);
+    await User.findOneAndUpdate({ uid: req.user.uid }, { $set: update }, { upsert: true, new: true });
 
     res.status(200).json({ success: true });
   } catch (error) {
