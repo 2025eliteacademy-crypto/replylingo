@@ -176,6 +176,10 @@ const syncPremium = async (req, res) => {
 const savePushToken = async (req, res) => {
   try {
     const { pushToken } = req.body;
+    // TEMP DEBUG — remove once the mobile "Couldn't enable notifications"
+    // issue is root-caused. Confirms the exact token the client sent and
+    // that it actually persisted.
+    console.log("[push-token][DEBUG] received for uid:", req.user.uid, "token:", pushToken);
 
     if (pushToken !== null && typeof pushToken !== "string") {
       return res.status(400).json({
@@ -184,11 +188,12 @@ const savePushToken = async (req, res) => {
       });
     }
 
-    await User.findOneAndUpdate(
+    const updated = await User.findOneAndUpdate(
       { uid: req.user.uid },
       { $set: { pushToken: pushToken || null } },
-      { upsert: true }
+      { upsert: true, new: true }
     );
+    console.log("[push-token][DEBUG] persisted pushToken in DB:", updated.pushToken);
 
     res.status(200).json({ success: true });
   } catch (error) {
