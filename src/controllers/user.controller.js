@@ -21,6 +21,10 @@ const getMe = async (req, res) => {
           req.user.firebase?.sign_in_provider === "anonymous" ||
           req.user.provider_id === "anonymous",
     },
+    // getMe is called on every app open, so this is the cheapest possible
+    // place to track activity for re-engagement notifications — no extra
+    // request needed from the client.
+    $set: { lastActiveAt: new Date() },
   },
   {
   upsert: true,
@@ -167,6 +171,34 @@ const syncPremium = async (req, res) => {
   }
 };
 
+// POST /api/user/push-token — body: { pushToken: string | null }
+// Pass null to clear the token (e.g. user turned notifications off).
+const savePushToken = async (req, res) => {
+  try {
+    const { pushToken } = req.body;
+
+    if (pushToken !== null && typeof pushToken !== "string") {
+      return res.status(400).json({
+        success: false,
+        message: "pushToken must be a string or null.",
+      });
+    }
+
+    await User.findOneAndUpdate(
+      { uid: req.user.uid },
+      { $set: { pushToken: pushToken || null } },
+      { upsert: true }
+    );
+
+    res.status(200).json({ success: true });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
 const deleteAccount = async (req, res) => {
   try {
     const uid = req.user.uid;
@@ -194,4 +226,4 @@ const deleteAccount = async (req, res) => {
   }
 };
 
-export { getMe, updateVoice, syncPremium, deleteAccount };
+export { getMe, updateVoice, syncPremium, deleteAccount, savePushToken };

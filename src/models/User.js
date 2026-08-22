@@ -26,6 +26,23 @@ const userSchema = new mongoose.Schema(
   type: String,
   default: "male",
 },
+
+    pushToken: {
+      type: String,
+      default: null,
+    },
+
+    lastActiveAt: {
+      type: Date,
+      default: Date.now,
+    },
+
+    // Last time a re-engagement push was sent, so the reminder job doesn't
+    // nudge the same inactive user every single day it runs.
+    lastReengagementSentAt: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,

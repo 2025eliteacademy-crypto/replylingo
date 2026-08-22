@@ -9,6 +9,7 @@ import connectDB from "./src/config/mongo.js";
 
 import userRoutes from "./src/routes/user.routes.js";
 import translateRoutes from "./src/routes/translate.routes.js";
+import notificationsRoutes from "./src/routes/notifications.routes.js";
 
 
 // Connect MongoDB
@@ -36,6 +37,7 @@ app.get("/", (req, res) => {
 
 app.use("/api/user", userRoutes);
 app.use("/api/translate", translateRoutes);
+app.use("/api/notifications", notificationsRoutes);
 
 // ======================
 // 404 Handler
