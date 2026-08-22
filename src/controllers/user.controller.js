@@ -171,15 +171,15 @@ const syncPremium = async (req, res) => {
   }
 };
 
-// POST /api/user/push-token — body: { pushToken: string | null }
-// Pass null to clear the token (e.g. user turned notifications off).
+// POST /api/user/push-token
+// body: { pushToken: string | null, platform?: "ios" | "android", environment?: "development" | "production" }
+// Pass pushToken: null to clear (e.g. user turned notifications off) — platform/environment are cleared with it.
+// platform/environment are required when saving a token: they're how the backend picks Firebase Admin (android)
+// vs. direct Apple APNs (ios), and which APNs host to use (see pushNotification.service.js / config/apns.js).
 const savePushToken = async (req, res) => {
   try {
-    const { pushToken } = req.body;
-    // TEMP DEBUG — remove once the mobile "Couldn't enable notifications"
-    // issue is root-caused. Confirms the exact token the client sent and
-    // that it actually persisted.
-    console.log("[push-token][DEBUG] received for uid:", req.user.uid, "token:", pushToken);
+    const { pushToken, platform, environment } = req.body;
+    console.log("[push-token][DEBUG] uid:", req.user.uid, "platform:", platform, "environment:", environment, "token:", pushToken);
 
     if (pushToken !== null && typeof pushToken !== "string") {
       return res.status(400).json({
@@ -188,12 +188,30 @@ const savePushToken = async (req, res) => {
       });
     }
 
+    if (pushToken && !["ios", "android"].includes(platform)) {
+      return res.status(400).json({
+        success: false,
+        message: 'platform must be "ios" or "android" when saving a pushToken.',
+      });
+    }
+
+    if (platform === "ios" && environment && !["development", "production"].includes(environment)) {
+      return res.status(400).json({
+        success: false,
+        message: 'environment must be "development" or "production".',
+      });
+    }
+
+    const update = pushToken
+      ? { pushToken, pushPlatform: platform, pushEnvironment: platform === "ios" ? environment || "development" : null }
+      : { pushToken: null, pushPlatform: null, pushEnvironment: null };
+
     const updated = await User.findOneAndUpdate(
       { uid: req.user.uid },
-      { $set: { pushToken: pushToken || null } },
+      { $set: update },
       { upsert: true, new: true }
     );
-    console.log("[push-token][DEBUG] persisted pushToken in DB:", updated.pushToken);
+    console.log("[push-token][DEBUG] persisted:", updated.pushToken, updated.pushPlatform, updated.pushEnvironment);
 
     res.status(200).json({ success: true });
   } catch (error) {
