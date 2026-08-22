@@ -7,7 +7,9 @@ import { runReengagementBatch } from "../services/pushNotification.service.js";
 // signed-in user making this request.
 const triggerReengagement = async (req, res) => {
   const provided = req.query.secret;
-
+  console.log("CRON_SECRET: ",process.env.CRON_SECRET);
+  console.log("req.query.secret: ",provided);
+  console.log("Does they match?")
   if (!process.env.CRON_SECRET) {
     console.error("[notifications] CRON_SECRET is not set — refusing to run.");
     return res.status(503).json({ success: false, message: "Not configured." });
