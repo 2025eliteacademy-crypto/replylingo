@@ -1,5 +1,5 @@
 import express from "express";
-import { triggerReengagement } from "../controllers/notifications.controller.js";
+import { triggerReengagement, triggerTestNotification } from "../controllers/notifications.controller.js";
 
 const router = express.Router();
 
@@ -9,5 +9,8 @@ const router = express.Router();
 // free-plan HTTP monitor can hit it — it only supports plain GET, no
 // custom headers or request bodies.
 router.get("/reengagement", triggerReengagement);
+
+// Manual delivery check during development — sends to one uid immediately.
+router.get("/test", triggerTestNotification);
 
 export default router;

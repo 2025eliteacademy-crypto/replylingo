@@ -78,3 +78,26 @@ export async function runReengagementBatch() {
 
   return { ran: true, candidates: candidates.length, sent };
 }
+
+// Sends one notification to a specific user immediately, bypassing the
+// inactivity/resend/idempotency checks above entirely. For manually
+// verifying delivery during development — never called by the batch job.
+export async function sendTestNotification(uid) {
+  const user = await User.findOne({ uid }).select("uid pushToken");
+
+  if (!user) {
+    return { ok: false, reason: "no such user" };
+  }
+  if (!user.pushToken) {
+    return { ok: false, reason: "user has no pushToken saved" };
+  }
+
+  const ok = await sendPushNotification({
+    uid: user.uid,
+    token: user.pushToken,
+    title: "Test notification",
+    body: "If you're seeing this, push notifications are working.",
+  });
+
+  return { ok };
+}

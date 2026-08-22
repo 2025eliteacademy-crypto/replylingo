@@ -1,4 +1,8 @@
-import { runReengagementBatch } from "../services/pushNotification.service.js";
+import { runReengagementBatch, sendTestNotification } from "../services/pushNotification.service.js";
+
+function isAuthorized(req) {
+  return !!process.env.CRON_SECRET && req.query.secret === process.env.CRON_SECRET;
+}
 
 // GET /api/notifications/reengagement?secret=... — meant to be pinged on a
 // schedule by an external monitor (e.g. UptimeRobot's free plan, which only
@@ -6,16 +10,12 @@ import { runReengagementBatch } from "../services/pushNotification.service.js";
 // Protected by a shared secret rather than user auth, since there's no
 // signed-in user making this request.
 const triggerReengagement = async (req, res) => {
-  const provided = req.query.secret;
-  console.log("CRON_SECRET: ",process.env.CRON_SECRET);
-  console.log("req.query.secret: ",provided);
-  console.log("Does they match?")
   if (!process.env.CRON_SECRET) {
     console.error("[notifications] CRON_SECRET is not set — refusing to run.");
     return res.status(503).json({ success: false, message: "Not configured." });
   }
 
-  if (provided !== process.env.CRON_SECRET) {
+  if (!isAuthorized(req)) {
     return res.status(401).json({ success: false, message: "Unauthorized." });
   }
 
@@ -28,4 +28,30 @@ const triggerReengagement = async (req, res) => {
   }
 };
 
-export { triggerReengagement };
+// GET /api/notifications/test?secret=...&uid=... — sends one notification to
+// a specific user immediately, ignoring the inactivity/resend rules. For
+// manually confirming delivery works during development.
+const triggerTestNotification = async (req, res) => {
+  if (!process.env.CRON_SECRET) {
+    return res.status(503).json({ success: false, message: "Not configured." });
+  }
+
+  if (!isAuthorized(req)) {
+    return res.status(401).json({ success: false, message: "Unauthorized." });
+  }
+
+  const { uid } = req.query;
+  if (!uid) {
+    return res.status(400).json({ success: false, message: "uid query param is required." });
+  }
+
+  try {
+    const result = await sendTestNotification(uid);
+    res.status(200).json({ success: true, ...result });
+  } catch (error) {
+    console.error("[notifications] Test notification failed:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export { triggerReengagement, triggerTestNotification };
