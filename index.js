@@ -10,6 +10,8 @@ import connectDB from "./src/config/mongo.js";
 import userRoutes from "./src/routes/user.routes.js";
 import translateRoutes from "./src/routes/translate.routes.js";
 import notificationsRoutes from "./src/routes/notifications.routes.js";
+import analyticsRoutes from "./src/routes/analytics.routes.js";
+import adminRoutes from "./src/routes/admin.routes.js";
 
 
 // Connect MongoDB
@@ -38,6 +40,8 @@ app.get("/", (req, res) => {
 app.use("/api/user", userRoutes);
 app.use("/api/translate", translateRoutes);
 app.use("/api/notifications", notificationsRoutes);
+app.use("/api/analytics", analyticsRoutes);
+app.use("/api/admin", adminRoutes);
 
 // ======================
 // 404 Handler

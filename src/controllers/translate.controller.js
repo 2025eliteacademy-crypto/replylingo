@@ -64,20 +64,31 @@ errorCode: "AUDIO_TOO_LONG",
     }
 
     // 1. Speech -> Text
-    const transcript = await transcribeAudio(req.file.buffer);
-
-    // 2. Detect Language
-    const detectedLanguage = await detectLanguage(transcript);
+    let transcript;
+    try {
+      transcript = await transcribeAudio(req.file.buffer);
+    } catch (err) {
+      err.errorCode = err.errorCode || "WHISPER_ERROR";
+      throw err;
+    }
 
     const targetLanguage = req.body.targetLanguage || "English";
 
-    // 3. Translate
-    const translatedText = await translateText(
-      transcript,
-      detectedLanguage,
-      targetLanguage,
-      { concise: durationSeconds > 60 }
-    );
+    // 2. Detect Language, 3. Translate — tagged together since both are the
+    // same logical "translation" stage for analytics purposes.
+    let detectedLanguage, translatedText;
+    try {
+      detectedLanguage = await detectLanguage(transcript);
+      translatedText = await translateText(
+        transcript,
+        detectedLanguage,
+        targetLanguage,
+        { concise: durationSeconds > 60 }
+      );
+    } catch (err) {
+      err.errorCode = err.errorCode || "TRANSLATION_ERROR";
+      throw err;
+    }
 
     // 4. Look up the user's saved voice preference (falls back to default
     // if they haven't picked one, or if the doc lookup fails for any reason)
@@ -92,7 +103,13 @@ errorCode: "AUDIO_TOO_LONG",
     }
 
     console.log("VOICE USED:", voiceId);
-    const audioBuffer = await generateSpeech(translatedText, voiceId);
+    let audioBuffer;
+    try {
+      audioBuffer = await generateSpeech(translatedText, voiceId);
+    } catch (err) {
+      err.errorCode = err.errorCode || "ELEVENLABS_ERROR";
+      throw err;
+    }
 
     // Spoken branding tag: appended only to the audio that's actually
     // destined to be shared back out (the reply leg — the client marks
@@ -149,6 +166,7 @@ errorCode: "AUDIO_TOO_LONG",
     return res.status(500).json({
       success: false,
       message: "Translation failed.",
+      errorCode: error.errorCode || "SERVER_ERROR",
     });
   }
 };
