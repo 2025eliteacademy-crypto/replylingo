@@ -18,6 +18,16 @@ const auth = async (req, res, next) => {
 
     req.user = decodedToken;
 
+    // Must be checked BEFORE the upsert below, and here specifically — this
+    // middleware runs on every authenticated route, so it's the one place
+    // guaranteed to see "no doc yet" on a user's very first request ever.
+    // (getMe used to run this same check itself, but by the time it ran,
+    // this middleware had already upserted the doc on the same request,
+    // so its check always found the doc "existing" and isNewUser was
+    // always false — see req.isNewUser usage in user.controller.js.)
+    const existingUser = await User.findOne({ uid: decodedToken.uid }).select("_id").lean();
+    req.isNewUser = !existingUser;
+
     // Create the user doc on first request, or just note their existence.
     // This runs on every request, but findOneAndUpdate with upsert is a
     // single cheap indexed query — negligible overhead.
