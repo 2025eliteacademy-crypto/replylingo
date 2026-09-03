@@ -85,6 +85,104 @@ async function totalCountsByParam(eventName, paramKey, from, to) {
   return map;
 }
 
+// Same idea as uniqueUserCountsByParam, but bucketed by a top-level Event
+// field (platform, appVersion) instead of a params.* value.
+async function uniqueUserCountsByField(eventName, field, from, to) {
+  const rows = await Event.aggregate([
+    { $match: { eventName, createdAt: { $gte: from, $lte: to } } },
+    { $group: { _id: { val: `$${field}`, distinctId: "$distinctId" } } },
+    { $group: { _id: "$_id.val", count: { $sum: 1 } } },
+  ]);
+  const map = {};
+  rows.forEach((r) => {
+    map[r._id === null || r._id === undefined ? "unknown" : String(r._id)] = r.count;
+  });
+  return map;
+}
+
+// Merges several per-key maps (e.g. app opens / translations started /
+// translations succeeded, each bucketed by platform or appVersion) into one
+// row per key, computing a success rate from the two translation counts.
+function mergeBreakdown(appOpenMap, startedMap, succeededMap) {
+  const keys = new Set([
+    ...Object.keys(appOpenMap),
+    ...Object.keys(startedMap),
+    ...Object.keys(succeededMap),
+  ]);
+  const result = {};
+  keys.forEach((key) => {
+    const appOpens = appOpenMap[key] || 0;
+    const translationsAttempted = startedMap[key] || 0;
+    const translationsSucceeded = succeededMap[key] || 0;
+    result[key] = {
+      appOpens,
+      translationsAttempted,
+      translationsSucceeded,
+      successRate: pct(translationsSucceeded, translationsAttempted),
+    };
+  });
+  return result;
+}
+
+// Continuous day-by-day series for app opens / signups / successful
+// translations — capped to a trailing window so "All time" doesn't render a
+// years-long, unreadable chart.
+const MAX_TREND_DAYS = 90;
+
+async function computeDailyTrend(from, to) {
+  const dayMs = 24 * 60 * 60 * 1000;
+  const trendFrom = to.getTime() - from.getTime() > MAX_TREND_DAYS * dayMs
+    ? new Date(to.getTime() - MAX_TREND_DAYS * dayMs)
+    : from;
+
+  const rows = await Event.aggregate([
+    {
+      $match: {
+        eventName: { $in: [EVENTS.APP_OPEN, EVENTS.SIGNUP_COMPLETED, EVENTS.TRANSLATION_SUCCEEDED] },
+        createdAt: { $gte: trendFrom, $lte: to },
+      },
+    },
+    {
+      $group: {
+        _id: {
+          day: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt", timezone: "UTC" } },
+          eventName: "$eventName",
+          distinctId: "$distinctId",
+        },
+      },
+    },
+    {
+      $group: {
+        _id: { day: "$_id.day", eventName: "$_id.eventName" },
+        count: { $sum: 1 },
+      },
+    },
+  ]);
+
+  const byDay = new Map();
+  rows.forEach((r) => {
+    const day = r._id.day;
+    if (!byDay.has(day)) byDay.set(day, { appOpens: 0, signups: 0, translationsSucceeded: 0 });
+    const bucket = byDay.get(day);
+    if (r._id.eventName === EVENTS.APP_OPEN) bucket.appOpens = r.count;
+    else if (r._id.eventName === EVENTS.SIGNUP_COMPLETED) bucket.signups = r.count;
+    else if (r._id.eventName === EVENTS.TRANSLATION_SUCCEEDED) bucket.translationsSucceeded = r.count;
+  });
+
+  const days = [];
+  const cursor = new Date(
+    Date.UTC(trendFrom.getUTCFullYear(), trendFrom.getUTCMonth(), trendFrom.getUTCDate()),
+  );
+  const endDay = new Date(Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), to.getUTCDate()));
+  while (cursor <= endDay) {
+    const key = cursor.toISOString().slice(0, 10);
+    const bucket = byDay.get(key) || { appOpens: 0, signups: 0, translationsSucceeded: 0 };
+    days.push({ date: key, ...bucket });
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return days;
+}
+
 // Day-N retention for the cohort of users whose very first-ever app_open
 // falls inside [from, to]. Looks forward from each user's own first open,
 // so activity can (and should) extend past `to`.
@@ -187,6 +285,16 @@ const getFunnelReport = async (req, res) => {
       uploadFailedByType,
       translationFailedByType,
       retention,
+      audioSelectedByScreen,
+      translationStartedByScreen,
+      translationSucceededByScreen,
+      platformAppOpen,
+      platformTranslationStarted,
+      platformTranslationSucceeded,
+      versionAppOpen,
+      versionTranslationStarted,
+      versionTranslationSucceeded,
+      dailyTrend,
     ] = await Promise.all([
       uniqueUserCounts(topLevelEventNames, from, to),
       totalCounts([EVENTS.APP_OPEN], from, to),
@@ -200,6 +308,18 @@ const getFunnelReport = async (req, res) => {
       uniqueUserCountsByParam(EVENTS.AUDIO_UPLOAD_FAILED, "error_type", from, to),
       uniqueUserCountsByParam(EVENTS.TRANSLATION_FAILED, "error_type", from, to),
       computeRetention(from, to),
+      // Record tab's pipeline calls always pass screen: "mic" (see
+      // useTranslateFlow2.js) — distinct from the Translate tab's "translate".
+      uniqueUserCountsByParam(EVENTS.AUDIO_SELECTED, "screen", from, to),
+      uniqueUserCountsByParam(EVENTS.TRANSLATION_STARTED, "screen", from, to),
+      uniqueUserCountsByParam(EVENTS.TRANSLATION_SUCCEEDED, "screen", from, to),
+      uniqueUserCountsByField(EVENTS.APP_OPEN, "platform", from, to),
+      uniqueUserCountsByField(EVENTS.TRANSLATION_STARTED, "platform", from, to),
+      uniqueUserCountsByField(EVENTS.TRANSLATION_SUCCEEDED, "platform", from, to),
+      uniqueUserCountsByField(EVENTS.APP_OPEN, "appVersion", from, to),
+      uniqueUserCountsByField(EVENTS.TRANSLATION_STARTED, "appVersion", from, to),
+      uniqueUserCountsByField(EVENTS.TRANSLATION_SUCCEEDED, "appVersion", from, to),
+      computeDailyTrend(from, to),
     ]);
 
     const appOpenUnique = topLevelUnique[EVENTS.APP_OPEN];
@@ -238,6 +358,31 @@ const getFunnelReport = async (req, res) => {
         completedPct: pct(completed, appOpenUnique),
       };
     });
+
+    const recordScreenReached = productScreensUnique["record"] || 0;
+    const recordAudioSelected = audioSelectedByScreen["mic"] || 0;
+    const recordTranslationStarted = translationStartedByScreen["mic"] || 0;
+    const recordTranslationSucceeded = translationSucceededByScreen["mic"] || 0;
+    const recordUsage = {
+      reached: recordScreenReached,
+      reachedPct: pct(recordScreenReached, appOpenUnique),
+      audioSelected: recordAudioSelected,
+      audioSelectedPct: pct(recordAudioSelected, recordScreenReached),
+      translationStarted: recordTranslationStarted,
+      translationSucceeded: recordTranslationSucceeded,
+      successRate: pct(recordTranslationSucceeded, recordTranslationStarted),
+    };
+
+    const platformBreakdown = mergeBreakdown(
+      platformAppOpen,
+      platformTranslationStarted,
+      platformTranslationSucceeded,
+    );
+    const versionBreakdown = mergeBreakdown(
+      versionAppOpen,
+      versionTranslationStarted,
+      versionTranslationSucceeded,
+    );
 
     const coreSuccessFunnel = [
       { key: "app_opened", label: "App opened", count: appOpenUnique },
@@ -303,6 +448,10 @@ const getFunnelReport = async (req, res) => {
       },
       failureBreakdown,
       coreSuccessFunnel,
+      recordUsage,
+      platformBreakdown,
+      versionBreakdown,
+      dailyTrend,
       retention,
     });
   } catch (error) {
