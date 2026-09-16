@@ -31,6 +31,12 @@ export const EVENTS = {
   TRANSLATION_STARTED: "translation_started",
   TRANSLATION_SUCCEEDED: "translation_succeeded",
   TRANSLATION_FAILED: "translation_failed",
+
+  PAYWALL_VIEWED: "paywall_viewed",
+  PURCHASE_STARTED: "purchase_started",
+  PURCHASE_COMPLETED: "purchase_completed",
+  PURCHASE_FAILED: "purchase_failed",
+  RESTORE_PURCHASE: "restore_purchase",
 };
 
 // The stable error_type vocabulary used by audio_upload_failed /

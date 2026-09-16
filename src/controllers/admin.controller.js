@@ -272,6 +272,11 @@ const getFunnelReport = async (req, res) => {
       EVENTS.TRANSLATION_FAILED,
       EVENTS.SAMPLE_VOICE_TAPPED,
       EVENTS.WHATSAPP_TUTORIAL_TAPPED,
+      EVENTS.PAYWALL_VIEWED,
+      EVENTS.PURCHASE_STARTED,
+      EVENTS.PURCHASE_COMPLETED,
+      EVENTS.PURCHASE_FAILED,
+      EVENTS.RESTORE_PURCHASE,
     ];
 
     const [
@@ -286,6 +291,8 @@ const getFunnelReport = async (req, res) => {
       productScreensUnique,
       uploadFailedByType,
       translationFailedByType,
+      paywallViewedBySource,
+      purchaseFailedByType,
       retention,
       audioSelectedByScreen,
       translationStartedByScreen,
@@ -309,6 +316,8 @@ const getFunnelReport = async (req, res) => {
       uniqueUserCountsByParam(EVENTS.SCREEN_REACHED, "screen", from, to),
       uniqueUserCountsByParam(EVENTS.AUDIO_UPLOAD_FAILED, "error_type", from, to),
       uniqueUserCountsByParam(EVENTS.TRANSLATION_FAILED, "error_type", from, to),
+      uniqueUserCountsByParam(EVENTS.PAYWALL_VIEWED, "source", from, to),
+      uniqueUserCountsByParam(EVENTS.PURCHASE_FAILED, "error_type", from, to),
       computeRetention(from, to),
       // Record tab's pipeline calls always pass screen: "mic" (see
       // useTranslateFlow2.js) — distinct from the Translate tab's "translate".
@@ -457,6 +466,31 @@ const getFunnelReport = async (req, res) => {
         sampleTappedPct: pct(topLevelUnique[EVENTS.SAMPLE_VOICE_TAPPED], topLevelUnique[EVENTS.TRANSLATE_SCREEN_OPENED]),
         tutorialTapped: topLevelUnique[EVENTS.WHATSAPP_TUTORIAL_TAPPED],
         tutorialTappedPct: pct(topLevelUnique[EVENTS.WHATSAPP_TUTORIAL_TAPPED], topLevelUnique[EVENTS.TRANSLATE_SCREEN_OPENED]),
+      },
+      // Paywall funnel — how many people see it (and from where: the hard
+      // free-limit block, the credits chip, or the new second-translation
+      // nudge), how many tap into a purchase, and how many actually buy.
+      monetization: {
+        paywallViewed: topLevelUnique[EVENTS.PAYWALL_VIEWED],
+        purchaseStarted: topLevelUnique[EVENTS.PURCHASE_STARTED],
+        purchaseCompleted: topLevelUnique[EVENTS.PURCHASE_COMPLETED],
+        purchaseFailed: topLevelUnique[EVENTS.PURCHASE_FAILED],
+        restorePurchase: topLevelUnique[EVENTS.RESTORE_PURCHASE],
+        clickThroughRate: pct(topLevelUnique[EVENTS.PURCHASE_STARTED], topLevelUnique[EVENTS.PAYWALL_VIEWED]),
+        conversionRate: pct(topLevelUnique[EVENTS.PURCHASE_COMPLETED], topLevelUnique[EVENTS.PAYWALL_VIEWED]),
+        purchaseSuccessRate: pct(topLevelUnique[EVENTS.PURCHASE_COMPLETED], topLevelUnique[EVENTS.PURCHASE_STARTED]),
+        viewsBySource: Object.fromEntries(
+          Object.entries(paywallViewedBySource).map(([source, count]) => [
+            source,
+            { count, pct: pct(count, topLevelUnique[EVENTS.PAYWALL_VIEWED]) },
+          ])
+        ),
+        failuresByType: Object.fromEntries(
+          Object.entries(purchaseFailedByType).map(([type, count]) => [
+            type,
+            { count, pct: pct(count, topLevelUnique[EVENTS.PURCHASE_FAILED]) },
+          ])
+        ),
       },
       failureBreakdown,
       coreSuccessFunnel,
