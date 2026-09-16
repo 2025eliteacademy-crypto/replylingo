@@ -270,6 +270,8 @@ const getFunnelReport = async (req, res) => {
       EVENTS.TRANSLATION_STARTED,
       EVENTS.TRANSLATION_SUCCEEDED,
       EVENTS.TRANSLATION_FAILED,
+      EVENTS.SAMPLE_VOICE_TAPPED,
+      EVENTS.WHATSAPP_TUTORIAL_TAPPED,
     ];
 
     const [
@@ -445,6 +447,16 @@ const getFunnelReport = async (req, res) => {
           acc[screen] = productScreensUnique[screen] || 0;
           return acc;
         }, {}),
+      },
+      // How the empty-state on the (previously dead-on-arrival) Translate
+      // screen is actually used — added alongside the sample-audio button
+      // and promoted WhatsApp tutorial card.
+      translateScreenEngagement: {
+        screenReached: topLevelUnique[EVENTS.TRANSLATE_SCREEN_OPENED],
+        sampleTapped: topLevelUnique[EVENTS.SAMPLE_VOICE_TAPPED],
+        sampleTappedPct: pct(topLevelUnique[EVENTS.SAMPLE_VOICE_TAPPED], topLevelUnique[EVENTS.TRANSLATE_SCREEN_OPENED]),
+        tutorialTapped: topLevelUnique[EVENTS.WHATSAPP_TUTORIAL_TAPPED],
+        tutorialTappedPct: pct(topLevelUnique[EVENTS.WHATSAPP_TUTORIAL_TAPPED], topLevelUnique[EVENTS.TRANSLATE_SCREEN_OPENED]),
       },
       failureBreakdown,
       coreSuccessFunnel,

@@ -21,6 +21,8 @@ export const EVENTS = {
 
   SCREEN_REACHED: "screen_reached",
   TRANSLATE_SCREEN_OPENED: "translate_screen_opened",
+  SAMPLE_VOICE_TAPPED: "sample_voice_tapped",
+  WHATSAPP_TUTORIAL_TAPPED: "whatsapp_tutorial_tapped",
 
   AUDIO_SELECTED: "audio_selected",
   AUDIO_UPLOAD_STARTED: "audio_upload_started",
