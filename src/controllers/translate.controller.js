@@ -9,8 +9,11 @@ import User from "../models/User.js";
 import { DEFAULT_VOICE_ID } from "../config/voiceCatalog.js";
 import { parseBuffer } from "music-metadata";
 
-// const MAX_AUDIO_SECONDS = 180; // 3 minutes, same cap for free and premium
-const MAX_AUDIO_SECONDS = 60; // 1 minutes, same cap for free and premium
+// Was capped at 60s, but "Audio too long" turned out to be the single
+// largest translation-failure category in production (38.5% of failures) —
+// real WhatsApp voice notes routinely run past a minute. Restored to the
+// original 3-minute cap; same limit for free and premium.
+const MAX_AUDIO_SECONDS = 180;
 
 // Directional per-call AI cost estimate (Whisper transcription + GPT
 // translation + Google Cloud TTS combined), from the earlier business
@@ -45,7 +48,7 @@ export const translateMessage = async (req, res) => {
       if (durationSeconds > MAX_AUDIO_SECONDS) {
         return res.status(413).json({
           success: false,
-          message: "Audio is too long. Please keep messages under 2 minutes.",
+          message: "Audio is too long. Please keep messages under 3 minutes.",
 errorCode: "AUDIO_TOO_LONG",
         });
       }
