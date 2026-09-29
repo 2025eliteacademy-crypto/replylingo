@@ -9,12 +9,14 @@
     "start": "node index.js"
   },
   "dependencies": {
+    "@google-cloud/text-to-speech": "^7.1.1",
     "axios": "^1.18.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "expo-server-sdk": "^6.1.0",
     "express": "^5.2.1",
     "firebase-admin": "^14.2.0",
+    "lamejs": "^1.2.1",
     "mongoose": "^9.8.1",
     "multer": "^2.2.0",
     "music-metadata": "^11.14.0",

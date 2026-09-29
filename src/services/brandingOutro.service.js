@@ -1,6 +1,6 @@
-import { generateSpeech } from "./elevenlabs.service.js";
+import { generateTranslatedSpeech } from "./tts.service.js";
 import { translateText } from "./openai.service.js";
-import { DEFAULT_VOICE_ID } from "../config/voices.js";
+import { DEFAULT_VOICE_ID } from "../config/voiceCatalog.js";
 
 // The spoken branding tag appended to free-tier outbound replies (see
 // translate.controller.js). It must be spoken in the reply's target
@@ -22,7 +22,7 @@ const OUTRO_SOURCE_LANGUAGE = "English";
 const cachedOutroBuffers = new Map();
 const pendingOutroPromises = new Map();
 
-export async function getBrandingOutroBuffer(targetLanguage) {
+export async function getBrandingOutroBuffer(targetLanguage, targetLanguageCode) {
   const language = (targetLanguage || OUTRO_SOURCE_LANGUAGE).trim();
   const cacheKey = language.toLowerCase();
 
@@ -37,7 +37,7 @@ export async function getBrandingOutroBuffer(targetLanguage) {
           ? `. ${OUTRO_SOURCE_TEXT}`
           : `. ${await translateText(OUTRO_SOURCE_TEXT, OUTRO_SOURCE_LANGUAGE, language)}`;
 
-      return generateSpeech(outroText, DEFAULT_VOICE_ID);
+      return generateTranslatedSpeech(outroText, targetLanguageCode, language, DEFAULT_VOICE_ID);
     })()
       .then((buffer) => {
         cachedOutroBuffers.set(cacheKey, buffer);

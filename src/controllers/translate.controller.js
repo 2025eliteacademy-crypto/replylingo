@@ -3,22 +3,22 @@ import {
   detectLanguage,
   translateText,
 } from "../services/openai.service.js";
-import { generateSpeech } from "../services/elevenlabs.service.js";
+import { generateTranslatedSpeech } from "../services/tts.service.js";
 import { getBrandingOutroBuffer } from "../services/brandingOutro.service.js";
 import User from "../models/User.js";
-import { DEFAULT_VOICE_ID } from "../config/voices.js";
+import { DEFAULT_VOICE_ID } from "../config/voiceCatalog.js";
 import { parseBuffer } from "music-metadata";
 
 // const MAX_AUDIO_SECONDS = 180; // 3 minutes, same cap for free and premium
 const MAX_AUDIO_SECONDS = 60; // 1 minutes, same cap for free and premium
 
 // Directional per-call AI cost estimate (Whisper transcription + GPT
-// translation + ElevenLabs TTS combined), from the earlier business
+// translation + Google Cloud TTS combined), from the earlier business
 // audit's ~$0.04/call figure. This is NOT wired up to real OpenAI/
-// ElevenLabs billing — it's a rough constant for relative free-vs-premium
+// Google Cloud billing — it's a rough constant for relative free-vs-premium
 // cost comparison until real per-provider usage-based pricing is plugged
-// in here (e.g. actual token counts * model price, actual audio seconds *
-// ElevenLabs per-character/second rate).
+// in here (e.g. actual token counts * model price, actual audio characters *
+// Google Cloud TTS per-character rate).
 const ESTIMATED_COST_PER_CALL_USD = 0.04;
 
 export const translateMessage = async (req, res) => {
@@ -73,6 +73,7 @@ errorCode: "AUDIO_TOO_LONG",
     }
 
     const targetLanguage = req.body.targetLanguage || "English";
+    const targetLanguageCode = req.body.targetLanguageCode || null;
 
     // 2. Detect Language, 3. Translate — tagged together since both are the
     // same logical "translation" stage for analytics purposes.
@@ -105,9 +106,14 @@ errorCode: "AUDIO_TOO_LONG",
     console.log("VOICE USED:", voiceId);
     let audioBuffer;
     try {
-      audioBuffer = await generateSpeech(translatedText, voiceId);
+      audioBuffer = await generateTranslatedSpeech(
+        translatedText,
+        targetLanguageCode,
+        targetLanguage,
+        voiceId
+      );
     } catch (err) {
-      err.errorCode = err.errorCode || "ELEVENLABS_ERROR";
+      err.errorCode = err.errorCode || "GOOGLE_TTS_ERROR";
       throw err;
     }
 
@@ -122,11 +128,13 @@ errorCode: "AUDIO_TOO_LONG",
     let finalAudioBuffer = audioBuffer;
     let branded = false;
 
-    if (isReply && !isPremium) {
+    // audioBuffer is null only for the rare fa/zu/ga text-only degrade path —
+    // nothing to brand in that case.
+    if (isReply && !isPremium && audioBuffer) {
       try {
-        const outroBuffer = await getBrandingOutroBuffer(targetLanguage);
-        finalAudioBuffer = Buffer.concat([audioBuffer, outroBuffer]);
-        branded = true;
+        const outroBuffer = await getBrandingOutroBuffer(targetLanguage, targetLanguageCode);
+        finalAudioBuffer = outroBuffer ? Buffer.concat([audioBuffer, outroBuffer]) : audioBuffer;
+        branded = Boolean(outroBuffer);
       } catch (brandingError) {
         // Branding is a nice-to-have on top of the core translation —
         // never let it block the user from getting their translated reply.
@@ -156,7 +164,8 @@ errorCode: "AUDIO_TOO_LONG",
       transcript,
       detectedLanguage,
       translatedText,
-      audio: finalAudioBuffer.toString("base64"),
+      audio: finalAudioBuffer ? finalAudioBuffer.toString("base64") : null,
+      audioAvailable: Boolean(finalAudioBuffer),
       branded,
       remainingFreeTranslations,
     });

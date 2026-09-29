@@ -1,7 +1,8 @@
 import User from "../models/User.js";
 import Usage from "../models/Usage.js";
-import { getVoiceMap, DEFAULT_VOICE_ID } from "../config/voices.js";
+import { isValidVoiceId, normalizeVoiceId, DEFAULT_VOICE_ID, VOICE_PERSONAS } from "../config/voiceCatalog.js";
 import { getSubscriberPremiumStatus } from "../services/revenuecat.service.js";
+import { getVoicePreviewBuffer } from "../services/voicePreview.service.js";
 
 const getMe = async (req, res) => {
   try {
@@ -67,17 +68,19 @@ const updateVoice = async (req, res) => {
     const { voiceId } = req.body;
     console.log("VOICE ID RECEIVED:", voiceId);
 
-    const VOICE_MAP = getVoiceMap();
-    if (!voiceId || !Object.prototype.hasOwnProperty.call(VOICE_MAP, voiceId)) {
+    if (!isValidVoiceId(voiceId)) {
       return res.status(400).json({
         success: false,
-        message: `voiceId must be one of: ${Object.keys(VOICE_MAP).join(", ")}`,
+        message: `voiceId must be one of: ${Object.keys(VOICE_PERSONAS).join(", ")}`,
       });
     }
 
+    // Normalizes legacy "male"/"female" values (still valid) to the new ids.
+    const normalizedVoiceId = normalizeVoiceId(voiceId);
+
 const user = await User.findOneAndUpdate(
   { uid: req.user.uid },
-  { $set: { voiceId } },
+  { $set: { voiceId: normalizedVoiceId } },
   {
     upsert: true,
     returnDocument: "after",
@@ -96,6 +99,45 @@ console.log("VOICE FIELD:", user?.voiceId);
     res.status(500).json({
       success: false,
       message: error.message,
+    });
+  }
+};
+
+// POST /api/user/voice-preview — body: { voiceId, languageCode? }
+// Lightweight: no usage credit, no DB write, no Whisper/branding. Used by the
+// Settings screen's per-voice "Preview" button.
+const previewVoice = async (req, res) => {
+  try {
+    const { voiceId, languageCode } = req.body;
+
+    if (!isValidVoiceId(voiceId)) {
+      return res.status(400).json({
+        success: false,
+        message: `voiceId must be one of: ${Object.keys(VOICE_PERSONAS).join(", ")}`,
+      });
+    }
+
+    const normalizedVoiceId = normalizeVoiceId(voiceId);
+    const audioBuffer = await getVoicePreviewBuffer(languageCode, normalizedVoiceId);
+
+    if (!audioBuffer) {
+      return res.status(422).json({
+        success: false,
+        message: "Voice preview unavailable for this language.",
+        errorCode: "PREVIEW_UNAVAILABLE",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      audio: audioBuffer.toString("base64"),
+    });
+  } catch (error) {
+    console.error("[previewVoice] Error:", error.message);
+    res.status(500).json({
+      success: false,
+      message: "Failed to generate voice preview.",
+      errorCode: "GOOGLE_TTS_ERROR",
     });
   }
 };
@@ -234,4 +276,4 @@ const deleteAccount = async (req, res) => {
   }
 };
 
-export { getMe, updateVoice, syncPremium, deleteAccount, savePushToken };
+export { getMe, updateVoice, previewVoice, syncPremium, deleteAccount, savePushToken };

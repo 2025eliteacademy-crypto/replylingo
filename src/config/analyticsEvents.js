@@ -51,7 +51,8 @@ export const ERROR_TYPES = [
   "timeout",
   "whisper_error",
   "translation_error",
-  "elevenlabs_error",
+  "google_tts_error",
+  "elevenlabs_error", // still reachable: silent fallback for fa/zu/ga (see tts.service.js)
   "unknown_error",
 ];
 
