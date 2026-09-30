@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { withAiLog } from "./aiCallLogger.js";
 
 const getOpenAIClient = () => {
   return new OpenAI({
@@ -10,7 +11,7 @@ export const detectLanguage = async (text) => {
   const openai = getOpenAIClient();
 
   try {
-    const response = await openai.chat.completions.create({
+    const response = await withAiLog("openai", "detect_language", () => openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
@@ -24,7 +25,7 @@ export const detectLanguage = async (text) => {
         },
       ],
       temperature: 0,
-    });
+    }));
 
     return response.choices[0].message.content.trim().toLowerCase();
   } catch (error) {
@@ -47,7 +48,7 @@ export const translateText = async (
       ? " Keep the translation brief and natural — trim filler, don't pad it out."
       : "";
 
-    const response = await openai.chat.completions.create({
+    const response = await withAiLog("openai", "translate", () => openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
@@ -60,7 +61,7 @@ export const translateText = async (
         },
       ],
       temperature: 0.2,
-    });
+    }));
 
     return response.choices[0].message.content.trim();
   } catch (error) {

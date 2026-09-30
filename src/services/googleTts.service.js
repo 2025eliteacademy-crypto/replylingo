@@ -1,6 +1,7 @@
 import { googleTtsClient } from "../config/googleTts.js";
 import { resolveVoice } from "../config/voiceCatalog.js";
 import { maximizeLoudnessToMp3 } from "./audioLoudness.js";
+import { withAiLog } from "./aiCallLogger.js";
 
 /**
  * @param {string} text
@@ -22,14 +23,14 @@ export const generateSpeech = async (text, targetLanguageCode, targetLanguageNam
     // volumeGainDb tops out at +16dB and still clips hard at that ceiling
     // (verified: peaks already hit full scale there), so a flat gain alone
     // can't get any louder. See audioLoudness.js for the actual boost.
-    const [response] = await googleTtsClient.synthesizeSpeech({
+    const [response] = await withAiLog("google_tts", "speech", () => googleTtsClient.synthesizeSpeech({
       input: { text },
       voice: { languageCode: resolved.locale, name: resolved.voiceName },
       audioConfig: {
         audioEncoding: "LINEAR16",
         effectsProfileId: ["handset-class-device"],
       },
-    });
+    }));
 
     const wavBuffer = Buffer.from(response.audioContent);
     return maximizeLoudnessToMp3(wavBuffer);

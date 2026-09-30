@@ -1,4 +1,5 @@
 import Event from "../models/Event.js";
+import AiCallLog from "../models/AiCallLog.js";
 import {
   EVENTS,
   ERROR_TYPES,
@@ -563,4 +564,89 @@ const getUserJourney = async (req, res) => {
   }
 };
 
-export { getFunnelReport, getUserJourney };
+const AI_PROVIDERS = ["whisper", "openai", "google_tts", "elevenlabs"];
+
+function isValidTimezone(tz) {
+  if (typeof tz !== "string") return false;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// en-CA formats as YYYY-MM-DD, matching Mongo's $dateToString below.
+function dayKey(date, tz) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(date);
+}
+
+// GET /api/admin/ai-usage?secret=&days=14&tz=Asia/Kolkata
+// Per-day call counts per AI provider (Whisper / OpenAI / Google TTS /
+// ElevenLabs), bucketed in the caller's timezone so "today" matches their
+// wall clock. Counts every provider call including failed ones (still
+// attempted/billed); `failed` is reported separately.
+const getAiUsageReport = async (req, res) => {
+  if (!isAuthorized(req)) {
+    return res.status(401).json({ success: false, message: "Unauthorized." });
+  }
+
+  try {
+    const tz = isValidTimezone(req.query.tz) ? req.query.tz : "UTC";
+    const days = Math.min(Math.max(parseInt(req.query.days, 10) || 14, 1), 90);
+    const since = new Date(Date.now() - (days + 1) * DAY_MS);
+
+    const rows = await AiCallLog.aggregate([
+      { $match: { createdAt: { $gte: since } } },
+      {
+        $group: {
+          _id: {
+            day: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt", timezone: tz } },
+            provider: "$provider",
+          },
+          count: { $sum: 1 },
+          failed: { $sum: { $cond: ["$success", 0, 1] } },
+        },
+      },
+    ]);
+
+    const emptyCounts = () => Object.fromEntries(AI_PROVIDERS.map((p) => [p, 0]));
+    const byDay = {};
+    for (let i = 0; i < days; i++) {
+      byDay[dayKey(new Date(Date.now() - i * DAY_MS), tz)] = {
+        counts: emptyCounts(),
+        failed: emptyCounts(),
+      };
+    }
+    rows.forEach((r) => {
+      const bucket = byDay[r._id.day];
+      if (!bucket || !AI_PROVIDERS.includes(r._id.provider)) return;
+      bucket.counts[r._id.provider] = r.count;
+      bucket.failed[r._id.provider] = r.failed;
+    });
+
+    const daily = Object.entries(byDay)
+      .map(([date, v]) => ({ date, ...v }))
+      .sort((a, b) => (a.date < b.date ? 1 : -1)); // newest first
+
+    const sumDays = (list) => {
+      const total = emptyCounts();
+      list.forEach((d) => AI_PROVIDERS.forEach((p) => (total[p] += d.counts[p])));
+      return total;
+    };
+
+    return res.json({
+      success: true,
+      timezone: tz,
+      today: daily[0]?.counts ?? emptyCounts(),
+      yesterday: daily[1]?.counts ?? emptyCounts(),
+      last7Days: sumDays(daily.slice(0, 7)),
+      daily,
+    });
+  } catch (error) {
+    console.error("AI usage report failed:", error);
+    return res.status(500).json({ success: false, message: "Failed to build AI usage report." });
+  }
+};
+
+export { getFunnelReport, getUserJourney, getAiUsageReport };

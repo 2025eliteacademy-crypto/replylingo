@@ -1,5 +1,5 @@
 import express from "express";
-import { getFunnelReport, getUserJourney } from "../controllers/admin.controller.js";
+import { getFunnelReport, getUserJourney, getAiUsageReport } from "../controllers/admin.controller.js";
 
 const router = express.Router();
 
@@ -8,5 +8,6 @@ const router = express.Router();
 // User yet, and these are meant for direct browser/curl use, not the app.
 router.get("/funnel", getFunnelReport);
 router.get("/user-journey", getUserJourney);
+router.get("/ai-usage", getAiUsageReport);
 
 export default router;

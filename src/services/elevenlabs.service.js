@@ -1,6 +1,7 @@
 import axios from "axios";
 import "dotenv/config";
 import { resolveElevenLabsVoiceId } from "../config/voices.js";
+import { withAiLog } from "./aiCallLogger.js";
 
 /**
  * @param {string} text
@@ -12,7 +13,7 @@ export const generateSpeech = async (text, voiceId) => {
   const elevenLabsVoiceId = resolveElevenLabsVoiceId(voiceId);
 
   try {
-    const response = await axios.post(
+    const response = await withAiLog("elevenlabs", "speech", () => axios.post(
       `https://api.elevenlabs.io/v1/text-to-speech/${elevenLabsVoiceId}`,
       {
         text,
@@ -26,7 +27,7 @@ export const generateSpeech = async (text, voiceId) => {
         },
         responseType: "arraybuffer",
       }
-    );
+    ));
 
     return Buffer.from(response.data);
   } catch (error) {
