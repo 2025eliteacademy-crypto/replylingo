@@ -101,6 +101,44 @@ async function uniqueUserCountsByField(eventName, field, from, to) {
   return map;
 }
 
+// Same idea as totalCountsByParam, but bucketed by a top-level Event field
+// instead of a params.* value — raw row count, not deduped by user.
+async function totalCountsByField(eventName, field, from, to) {
+  const rows = await Event.aggregate([
+    { $match: { eventName, createdAt: { $gte: from, $lte: to } } },
+    { $group: { _id: `$${field}`, count: { $sum: 1 } } },
+  ]);
+  const map = {};
+  rows.forEach((r) => {
+    map[r._id === null || r._id === undefined ? "unknown" : String(r._id)] = r.count;
+  });
+  return map;
+}
+
+// Same idea as uniqueUserCountsByField, but additionally filters to rows
+// where params[paramKey] === paramValue before grouping by the top-level
+// field — e.g. purchase_failed events where error_type is specifically
+// "user_cancelled", bucketed by platform. No existing helper combines a
+// params-value filter with a top-level-field group in one aggregation.
+async function uniqueUserCountsByFieldAndParamValue(eventName, field, paramKey, paramValue, from, to) {
+  const rows = await Event.aggregate([
+    {
+      $match: {
+        eventName,
+        [`params.${paramKey}`]: paramValue,
+        createdAt: { $gte: from, $lte: to },
+      },
+    },
+    { $group: { _id: { val: `$${field}`, distinctId: "$distinctId" } } },
+    { $group: { _id: "$_id.val", count: { $sum: 1 } } },
+  ]);
+  const map = {};
+  rows.forEach((r) => {
+    map[r._id === null || r._id === undefined ? "unknown" : String(r._id)] = r.count;
+  });
+  return map;
+}
+
 // Merges several per-key maps (e.g. app opens / translations started /
 // translations succeeded, each bucketed by platform or appVersion) into one
 // row per key, computing a success rate from the two translation counts.
@@ -304,6 +342,12 @@ const getFunnelReport = async (req, res) => {
       versionAppOpen,
       versionTranslationStarted,
       versionTranslationSucceeded,
+      platformPaywallViewedUsers,
+      platformPaywallViewedEvents,
+      platformPurchaseStarted,
+      platformPurchaseCompleted,
+      platformPurchaseFailed,
+      platformCancelled,
       dailyTrend,
     ] = await Promise.all([
       uniqueUserCounts(topLevelEventNames, from, to),
@@ -331,6 +375,12 @@ const getFunnelReport = async (req, res) => {
       uniqueUserCountsByField(EVENTS.APP_OPEN, "appVersion", from, to),
       uniqueUserCountsByField(EVENTS.TRANSLATION_STARTED, "appVersion", from, to),
       uniqueUserCountsByField(EVENTS.TRANSLATION_SUCCEEDED, "appVersion", from, to),
+      uniqueUserCountsByField(EVENTS.PAYWALL_VIEWED, "platform", from, to),
+      totalCountsByField(EVENTS.PAYWALL_VIEWED, "platform", from, to),
+      uniqueUserCountsByField(EVENTS.PURCHASE_STARTED, "platform", from, to),
+      uniqueUserCountsByField(EVENTS.PURCHASE_COMPLETED, "platform", from, to),
+      uniqueUserCountsByField(EVENTS.PURCHASE_FAILED, "platform", from, to),
+      uniqueUserCountsByFieldAndParamValue(EVENTS.PURCHASE_FAILED, "platform", "error_type", "user_cancelled", from, to),
       computeDailyTrend(from, to),
     ]);
 
@@ -395,6 +445,38 @@ const getFunnelReport = async (req, res) => {
       versionTranslationStarted,
       versionTranslationSucceeded,
     );
+
+    // Platform-segmented monetization — same unique-user-count convention as
+    // the rest of `monetization` below, except paywallViewed which also
+    // exposes a raw event count (users can view the paywall more than once).
+    // "purchaseStarted" covers BOTH "tapped a plan" and "checkout started":
+    // with current mobile instrumentation these are the same purchase_started
+    // event (see PaywallScreen.js handlePurchase) — there is no separate
+    // "selected a plan card" event, so they cannot be split without a new
+    // mobile-side event. Treated as one merged metric here by design.
+    const platformMonetizationKeys = new Set([
+      ...Object.keys(platformAppOpen),
+      ...Object.keys(platformPaywallViewedUsers),
+      ...Object.keys(platformPurchaseStarted),
+      ...Object.keys(platformPurchaseCompleted),
+      ...Object.keys(platformPurchaseFailed),
+      ...Object.keys(platformCancelled),
+    ]);
+    const monetizationByPlatform = {};
+    platformMonetizationKeys.forEach((key) => {
+      const paywallViewedUsers = platformPaywallViewedUsers[key] || 0;
+      const purchaseCompletedUsers = platformPurchaseCompleted[key] || 0;
+      monetizationByPlatform[key] = {
+        users: platformAppOpen[key] || 0,
+        paywallViewedUsers,
+        paywallViewedEvents: platformPaywallViewedEvents[key] || 0,
+        purchaseStartedUsers: platformPurchaseStarted[key] || 0,
+        purchaseCompletedUsers,
+        purchaseFailedUsers: platformPurchaseFailed[key] || 0,
+        cancelledUsers: platformCancelled[key] || 0,
+        conversionRate: pct(purchaseCompletedUsers, paywallViewedUsers),
+      };
+    });
 
     const coreSuccessFunnel = [
       { key: "app_opened", label: "App opened", count: appOpenUnique },
@@ -498,6 +580,7 @@ const getFunnelReport = async (req, res) => {
       recordUsage,
       platformBreakdown,
       versionBreakdown,
+      monetizationByPlatform,
       dailyTrend,
       retention,
     });
