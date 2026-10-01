@@ -37,6 +37,13 @@ export const EVENTS = {
   PURCHASE_COMPLETED: "purchase_completed",
   PURCHASE_FAILED: "purchase_failed",
   RESTORE_PURCHASE: "restore_purchase",
+
+  // Website (ReplyLingo_website) events — fired by src/lib/webTracking.ts, not
+  // the mobile app. distinctId is prefixed "web_" so it can never collide with
+  // an app install id. params.channel is the classified traffic source
+  // (chatgpt, perplexity, google, direct, ...); see WEB_CHANNELS below.
+  WEB_VISIT: "web_visit",
+  STORE_CLICK: "store_click",
 };
 
 // The stable error_type vocabulary used by audio_upload_failed /

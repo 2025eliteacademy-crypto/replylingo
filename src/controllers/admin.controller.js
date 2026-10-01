@@ -590,6 +590,84 @@ const getFunnelReport = async (req, res) => {
   }
 };
 
+// GET /api/admin/traffic?secret=...&from=...&to=...
+// Website acquisition: where visitors came from (utm_source / referrer,
+// classified client-side into params.channel) and how many of them clicked
+// through to an app store. Website events share the Event collection but use
+// their own event names, so the app funnel/retention queries never see them.
+const getTrafficReport = async (req, res) => {
+  if (!isAuthorized(req)) {
+    return res.status(401).json({ success: false, message: "Unauthorized." });
+  }
+
+  try {
+    const { from, to } = parseRange(req);
+
+    const [
+      totals,
+      totalEvents,
+      visitorsByChannel,
+      visitsByChannel,
+      clickersByChannel,
+      clicksByChannel,
+      visitorsByLanding,
+      visitsBySource,
+      clicksByStore,
+    ] = await Promise.all([
+      uniqueUserCounts([EVENTS.WEB_VISIT, EVENTS.STORE_CLICK], from, to),
+      totalCounts([EVENTS.WEB_VISIT, EVENTS.STORE_CLICK], from, to),
+      uniqueUserCountsByParam(EVENTS.WEB_VISIT, "channel", from, to),
+      totalCountsByParam(EVENTS.WEB_VISIT, "channel", from, to),
+      uniqueUserCountsByParam(EVENTS.STORE_CLICK, "channel", from, to),
+      totalCountsByParam(EVENTS.STORE_CLICK, "channel", from, to),
+      uniqueUserCountsByParam(EVENTS.WEB_VISIT, "landing_page", from, to),
+      totalCountsByParam(EVENTS.WEB_VISIT, "source", from, to),
+      totalCountsByParam(EVENTS.STORE_CLICK, "store", from, to),
+    ]);
+
+    const channelKeys = new Set([...Object.keys(visitorsByChannel), ...Object.keys(clickersByChannel)]);
+    const channels = {};
+    channelKeys.forEach((key) => {
+      const visitors = visitorsByChannel[key] || 0;
+      const storeClickers = clickersByChannel[key] || 0;
+      channels[key] = {
+        visitors,
+        visits: visitsByChannel[key] || 0,
+        storeClickers,
+        storeClicks: clicksByChannel[key] || 0,
+        clickRate: pct(storeClickers, visitors),
+        visitorsPct: pct(visitors, totals[EVENTS.WEB_VISIT]),
+      };
+    });
+
+    res.json({
+      success: true,
+      range: { from, to },
+      totals: {
+        visitors: totals[EVENTS.WEB_VISIT],
+        visits: totalEvents[EVENTS.WEB_VISIT],
+        storeClickers: totals[EVENTS.STORE_CLICK],
+        storeClicks: totalEvents[EVENTS.STORE_CLICK],
+        clickRate: pct(totals[EVENTS.STORE_CLICK], totals[EVENTS.WEB_VISIT]),
+      },
+      channels,
+      landingPages: Object.fromEntries(
+        Object.entries(visitorsByLanding).map(([page, count]) => [
+          page,
+          { count, pct: pct(count, totals[EVENTS.WEB_VISIT]) },
+        ])
+      ),
+      // Raw utm_source / referrer-host values behind the channels — useful to
+      // spot a new AI referrer that isn't classified yet (lands in "other").
+      sources: visitsBySource,
+      storeClicksByStore: clicksByStore,
+    });
+  } catch (error) {
+    console.error("[admin] Traffic report failed:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 // GET /api/admin/user-journey?secret=...&distinctId=...  (or &uid=...)
 // Full chronological event list for one user, plus the per-user retention
 // summary fields (first_seen_at, last_seen_at, translation attempt/success
@@ -732,4 +810,4 @@ const getAiUsageReport = async (req, res) => {
   }
 };
 
-export { getFunnelReport, getUserJourney, getAiUsageReport };
+export { getFunnelReport, getUserJourney, getAiUsageReport, getTrafficReport };
