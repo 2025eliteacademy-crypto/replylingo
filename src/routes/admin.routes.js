@@ -1,5 +1,5 @@
 import express from "express";
-import { getFunnelReport, getUserJourney, getAiUsageReport, getTrafficReport } from "../controllers/admin.controller.js";
+import { getFunnelReport, getUserJourney, getAiUsageReport, getTrafficReport, getNotificationAudience, sendNotification } from "../controllers/admin.controller.js";
 
 const router = express.Router();
 
@@ -10,5 +10,7 @@ router.get("/funnel", getFunnelReport);
 router.get("/user-journey", getUserJourney);
 router.get("/ai-usage", getAiUsageReport);
 router.get("/traffic", getTrafficReport);
+router.get("/notification-audience", getNotificationAudience);
+router.post("/send-notification", sendNotification);
 
 export default router;

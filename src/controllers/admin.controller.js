@@ -1,6 +1,11 @@
 import Event from "../models/Event.js";
 import AiCallLog from "../models/AiCallLog.js";
 import {
+  PUSH_PLATFORMS,
+  getPushAudienceCounts,
+  sendAnnouncementPushToAllUsers,
+} from "../services/pushNotification.service.js";
+import {
   EVENTS,
   ERROR_TYPES,
   ONBOARDING_SCREEN_COUNT,
@@ -668,6 +673,59 @@ const getTrafficReport = async (req, res) => {
   }
 };
 
+// GET /api/admin/notification-audience?secret=...
+const getNotificationAudience = async (req, res) => {
+  if (!isAuthorized(req)) {
+    return res.status(401).json({ success: false, message: "Unauthorized." });
+  }
+  try {
+    res.json({ success: true, counts: await getPushAudienceCounts() });
+  } catch (error) {
+    console.error("[admin] Notification audience failed:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// POST /api/admin/send-notification?secret=...
+// Body: { platform: "android" | "ios" | "all", title, body }
+// Admin-dashboard broadcast (sale announcements etc.) — same Expo delivery
+// as /api/notifications/announcement, plus the platform filter.
+const sendNotification = async (req, res) => {
+  if (!isAuthorized(req)) {
+    return res.status(401).json({ success: false, message: "Unauthorized." });
+  }
+
+  const { platform, title, body } = req.body || {};
+  if (!PUSH_PLATFORMS.includes(platform)) {
+    return res.status(400).json({ success: false, message: "platform must be android, ios or all." });
+  }
+  if (typeof title !== "string" || typeof body !== "string" || !title.trim() || !body.trim()) {
+    return res.status(400).json({ success: false, message: "title and body are required." });
+  }
+  if (title.length > 65 || body.length > 240) {
+    return res.status(400).json({ success: false, message: "Title max 65 chars, body max 240." });
+  }
+
+  try {
+    const result = await sendAnnouncementPushToAllUsers({
+      title: title.trim(),
+      body: body.trim(),
+      platform,
+    });
+    console.log(`[admin] Broadcast (${platform}) "${title.trim()}":`, {
+      targets: result.totalTargetUsers,
+      tickets: result.totalTickets,
+      errors: result.totalTicketErrors,
+    });
+    // ticketErrors can be huge and carries uids — keep the response compact.
+    const { ticketErrors, ...summary } = result;
+    res.json({ success: true, platform, ...summary });
+  } catch (error) {
+    console.error("[admin] Send notification failed:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 // GET /api/admin/user-journey?secret=...&distinctId=...  (or &uid=...)
 // Full chronological event list for one user, plus the per-user retention
 // summary fields (first_seen_at, last_seen_at, translation attempt/success
@@ -810,4 +868,4 @@ const getAiUsageReport = async (req, res) => {
   }
 };
 
-export { getFunnelReport, getUserJourney, getAiUsageReport, getTrafficReport };
+export { getFunnelReport, getUserJourney, getAiUsageReport, getTrafficReport, getNotificationAudience, sendNotification };

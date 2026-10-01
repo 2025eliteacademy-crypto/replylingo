@@ -133,8 +133,17 @@ export async function runReengagementBatch() {
 // minus the tenant scoping (this app has no tenant concept, so it's just
 // "every user"). Uses Expo's real chunking/ticket API instead of a
 // hand-rolled per-user loop.
-export async function sendAnnouncementPushToAllUsers({ title, body }) {
-  const users = await User.find({ pushToken: { $ne: null } }).select("uid pushToken");
+//
+// `platform` narrows the audience: "android" | "ios" | "all" (default). The
+// filter uses User.pushPlatform, recorded when the device registers its
+// token — users who registered before that field existed have null and are
+// only reachable with "all".
+export const PUSH_PLATFORMS = ["android", "ios", "all"];
+
+export async function sendAnnouncementPushToAllUsers({ title, body, platform = "all" }) {
+  const filter = { pushToken: { $ne: null } };
+  if (platform !== "all") filter.pushPlatform = platform;
+  const users = await User.find(filter).select("uid pushToken");
 
   const validUsers = [];
   const invalidUids = [];
@@ -241,4 +250,19 @@ export async function sendTestNotification(uid) {
   });
 
   return result;
+}
+
+// How many users a broadcast would reach, per platform — shown in the admin
+// UI before sending so the button never fires blind.
+export async function getPushAudienceCounts() {
+  const rows = await User.aggregate([
+    { $match: { pushToken: { $ne: null } } },
+    { $group: { _id: "$pushPlatform", count: { $sum: 1 } } },
+  ]);
+  const counts = { android: 0, ios: 0, unknown: 0 };
+  rows.forEach((r) => {
+    if (r._id === "android" || r._id === "ios") counts[r._id] = r.count;
+    else counts.unknown += r.count;
+  });
+  return { ...counts, all: counts.android + counts.ios + counts.unknown };
 }
