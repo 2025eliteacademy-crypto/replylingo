@@ -8,7 +8,18 @@ const usageSchema = new mongoose.Schema(
       unique: true,
     },
 
+// Free users' LIFETIME credits used — never reset. A free account gets
+// freeLimit translations in total, then must subscribe.
 usageCredits: {
+  type: Number,
+  default: 0,
+},
+
+// Premium users' credits used today — only feeds the silent daily abuse
+// cap, and resets with lastReset. Kept separate from usageCredits so
+// premium usage never eats into the free lifetime allowance if a
+// subscription lapses.
+premiumDailyCredits: {
   type: Number,
   default: 0,
 },
@@ -27,6 +38,7 @@ estimatedCostUsd: {
   default: 0,
 },
 
+    // Last reset of premiumDailyCredits (free credits don't reset).
     lastReset: {
       type: Date,
       default: Date.now,

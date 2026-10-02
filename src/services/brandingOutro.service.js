@@ -1,6 +1,7 @@
 import { generateTranslatedSpeech } from "./tts.service.js";
 import { translateText } from "./openai.service.js";
-import { DEFAULT_VOICE_ID } from "../config/voiceCatalog.js";
+import { normalizeVoiceId } from "../config/voiceCatalog.js";
+import VoicePreview from "../models/VoicePreview.js";
 
 // The spoken branding tag appended to free-tier outbound replies (see
 // translate.controller.js). It must be spoken in the reply's target
@@ -9,6 +10,12 @@ import { DEFAULT_VOICE_ID } from "../config/voiceCatalog.js";
 // language (keyed by the normalized target language name) so each
 // language only ever pays for one GPT translation + one ElevenLabs TTS
 // call, no matter how many shares happen afterwards.
+//
+// The outro is spoken in the SAME voice the user picked for the reply (so a
+// female-voice reply doesn't end with a male "Sent with ReplyLingo"), which
+// means one clip per (language, voice). Clips are persisted in Mongo (the
+// VoicePreview collection, key "outro:<language>:<voiceId>") so each
+// combination is generated once ever, not once per serverless cold start.
 //
 // A leading "..." was tried to induce a pause but caused ElevenLabs to
 // mis-articulate "Sent" as "Assent"/"Ascent" in ~50% of generations
@@ -22,9 +29,11 @@ const OUTRO_SOURCE_LANGUAGE = "English";
 const cachedOutroBuffers = new Map();
 const pendingOutroPromises = new Map();
 
-export async function getBrandingOutroBuffer(targetLanguage, targetLanguageCode) {
+export async function getBrandingOutroBuffer(targetLanguage, targetLanguageCode, voiceId) {
   const language = (targetLanguage || OUTRO_SOURCE_LANGUAGE).trim();
-  const cacheKey = language.toLowerCase();
+  const languageKey = language.toLowerCase();
+  const voice = normalizeVoiceId(voiceId);
+  const cacheKey = `${languageKey}:${voice}`;
 
   if (cachedOutroBuffers.has(cacheKey)) {
     return cachedOutroBuffers.get(cacheKey);
@@ -32,12 +41,25 @@ export async function getBrandingOutroBuffer(targetLanguage, targetLanguageCode)
 
   if (!pendingOutroPromises.has(cacheKey)) {
     const promise = (async () => {
+      const dbKey = `outro:${cacheKey}`;
+      const stored = await VoicePreview.findOne({ key: dbKey }).select("audio");
+      if (stored?.audio) return stored.audio;
+
       const outroText =
-        cacheKey === OUTRO_SOURCE_LANGUAGE.toLowerCase()
+        languageKey === OUTRO_SOURCE_LANGUAGE.toLowerCase()
           ? `. ${OUTRO_SOURCE_TEXT}`
           : `. ${await translateText(OUTRO_SOURCE_TEXT, OUTRO_SOURCE_LANGUAGE, language)}`;
 
-      return generateTranslatedSpeech(outroText, targetLanguageCode, language, DEFAULT_VOICE_ID);
+      const generated = await generateTranslatedSpeech(outroText, targetLanguageCode, language, voice);
+
+      if (generated) {
+        await VoicePreview.updateOne(
+          { key: dbKey },
+          { $set: { audio: generated } },
+          { upsert: true }
+        ).catch((err) => console.error("[brandingOutro] Failed to persist outro:", err.message));
+      }
+      return generated;
     })()
       .then((buffer) => {
         cachedOutroBuffers.set(cacheKey, buffer);

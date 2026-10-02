@@ -135,7 +135,7 @@ errorCode: "AUDIO_TOO_LONG",
     // nothing to brand in that case.
     if (isReply && !isPremium && audioBuffer) {
       try {
-        const outroBuffer = await getBrandingOutroBuffer(targetLanguage, targetLanguageCode);
+        const outroBuffer = await getBrandingOutroBuffer(targetLanguage, targetLanguageCode, voiceId);
         finalAudioBuffer = outroBuffer ? Buffer.concat([audioBuffer, outroBuffer]) : audioBuffer;
         branded = Boolean(outroBuffer);
       } catch (brandingError) {
@@ -150,7 +150,13 @@ errorCode: "AUDIO_TOO_LONG",
 
     if (req.usage) {
       const usageCost = req.body.screen === "translate" ? 0.5 : 1;
-      req.usage.usageCredits += usageCost;
+      // Premium usage feeds only the daily abuse cap; free usage is the
+      // lifetime allowance (see models/Usage.js).
+      if (isPremium) {
+        req.usage.premiumDailyCredits = (req.usage.premiumDailyCredits || 0) + usageCost;
+      } else {
+        req.usage.usageCredits += usageCost;
+      }
       req.usage.estimatedCostUsd = (req.usage.estimatedCostUsd || 0) + ESTIMATED_COST_PER_CALL_USD;
       await req.usage.save();
 

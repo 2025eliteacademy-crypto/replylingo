@@ -15,18 +15,19 @@ const usageLimit = async (req, res, next) => {
       usage = await Usage.create({ uid, usageCredits: 0, freeLimit: 3 });
     }
 
-    // Daily reset — applies to both free and premium counters
-    const now = new Date();
-    const isNewDay = now.toDateString() !== new Date(usage.lastReset).toDateString();
-    if (isNewDay) {
-      usage.usageCredits = 0;
-      usage.lastReset = now;
-      await usage.save();
-    }
-
     if (user?.premium) {
+      // Daily reset applies to the premium abuse-guard counter only. Free
+      // credits are a one-time lifetime allowance and never reset.
+      const now = new Date();
+      const isNewDay = now.toDateString() !== new Date(usage.lastReset).toDateString();
+      if (isNewDay) {
+        usage.premiumDailyCredits = 0;
+        usage.lastReset = now;
+        await usage.save();
+      }
+
       // Silent abuse guard — never surfaced to the client as "premiumRequired"
-      if (usage.usageCredits >= PREMIUM_DAILY_LIMIT) {
+      if ((usage.premiumDailyCredits || 0) >= PREMIUM_DAILY_LIMIT) {
         console.log("Premium daily cap hit (silent) for uid:", uid);
         return res.status(429).json({
           success: false,
