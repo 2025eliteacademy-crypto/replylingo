@@ -1,6 +1,8 @@
 import crypto from "crypto";
 import User from "../models/User.js";
 import RevenueCatEvent from "../models/RevenueCatEvent.js";
+import Event from "../models/Event.js";
+import { EVENTS } from "../config/analyticsEvents.js";
 
 // Entitlement that unlocks Pro. RevenueCat sends the entitlement identifier
 // ("ReplyLingo Pro", what the app checks) and, in some payloads, the
@@ -47,6 +49,8 @@ function computeUpdate(event, now = Date.now()) {
     premiumProductId: event.new_product_id || event.product_id || null,
     premiumStore: event.store || null,
     premiumExpiresAt: expiresMs ? new Date(expiresMs) : null,
+    // "TRIAL" while in the free trial; flips to "NORMAL" once it converts.
+    premiumPeriodType: event.period_type || null,
   };
   // No expiration (e.g. lifetime) => active; otherwise only while unexpired.
   const stillActive = expiresMs === null || expiresMs > now;
@@ -61,6 +65,90 @@ function computeUpdate(event, now = Date.now()) {
     return { ...base, premium: stillActive, premiumWillRenew: false };
   }
   return null;
+}
+
+const PLATFORM_BY_STORE = { APP_STORE: "ios", MAC_APP_STORE: "ios", PLAY_STORE: "android" };
+
+function planFromProduct(productId) {
+  if (/year|annual/i.test(productId || "")) return "annual";
+  if (/month/i.test(productId || "")) return "monthly";
+  return "unknown";
+}
+
+function isProEvent(event) {
+  const entitlements = event.entitlement_ids || (event.entitlement_id ? [event.entitlement_id] : []);
+  return !entitlements.length || entitlements.some((e) => PRO_ENTITLEMENTS.includes(e));
+}
+
+// Pure: which subscription-lifecycle analytics event (if any) does this
+// RevenueCat event represent? Trials are kept strictly separate from paid
+// events, and only PAID_STARTED / TRIAL_CONVERTED / RENEWED carry revenue.
+function buildLifecycleEvent(event, prevPeriodType) {
+  const period = event.period_type || null;
+  const inTrial = period ? period === "TRIAL" : prevPeriodType === "TRIAL";
+  let name = null;
+
+  switch (event.type) {
+    case "INITIAL_PURCHASE":
+      name = period === "TRIAL" ? EVENTS.SUB_TRIAL_STARTED : EVENTS.SUB_PAID_STARTED;
+      break;
+    case "RENEWAL": {
+      const converted =
+        event.is_trial_conversion === true || (prevPeriodType === "TRIAL" && period === "NORMAL");
+      name = converted ? EVENTS.SUB_TRIAL_CONVERTED : EVENTS.SUB_RENEWED;
+      break;
+    }
+    case "CANCELLATION":
+      name = inTrial ? EVENTS.SUB_TRIAL_CANCELLED : EVENTS.SUB_CANCELLED;
+      break;
+    case "EXPIRATION":
+      name = inTrial ? EVENTS.SUB_TRIAL_EXPIRED : EVENTS.SUB_EXPIRED;
+      break;
+    default:
+      return null;
+  }
+
+  const earnsRevenue = [EVENTS.SUB_PAID_STARTED, EVENTS.SUB_TRIAL_CONVERTED, EVENTS.SUB_RENEWED].includes(name);
+  const price = Number(event.price);
+
+  return {
+    name,
+    platform: PLATFORM_BY_STORE[event.store] || null,
+    params: {
+      rc_event_id: event.id,
+      plan: planFromProduct(event.product_id),
+      product_id: event.product_id || null,
+      store: event.store || null,
+      environment: event.environment || null,
+      period_type: period,
+      is_trial: name === EVENTS.SUB_TRIAL_STARTED,
+      cancel_reason: event.cancel_reason || event.expiration_reason || null,
+      currency: event.currency || null,
+      // RevenueCat's `price` is USD for the transaction. Strictly 0 for anything
+      // that isn't a real charge so trials can never leak into revenue.
+      revenue_usd: earnsRevenue && Number.isFinite(price) ? price : 0,
+    },
+  };
+}
+
+// Idempotent on rc_event_id: a retried webhook never double-counts.
+async function recordLifecycleEvent(event, lifecycle) {
+  const set = {
+    distinctId: event.app_user_id,
+    uid: isAnonymousId(event.app_user_id) ? null : event.app_user_id,
+    isGuest: null,
+    platform: lifecycle.platform,
+    appVersion: null,
+    clientTimestamp: event.event_timestamp_ms ? new Date(event.event_timestamp_ms) : null,
+  };
+  Object.entries(lifecycle.params).forEach(([k, v]) => {
+    set[`params.${k}`] = v;
+  });
+  await Event.updateOne(
+    { eventName: lifecycle.name, "params.rc_event_id": event.id },
+    { $setOnInsert: set },
+    { upsert: true }
+  );
 }
 
 async function applyToUsers(uids, ts, update) {
@@ -92,10 +180,7 @@ async function processEvent(event) {
     return "applied";
   }
 
-  const entitlements = event.entitlement_ids || (event.entitlement_id ? [event.entitlement_id] : []);
-  if (entitlements.length && !entitlements.some((e) => PRO_ENTITLEMENTS.includes(e))) {
-    return "ignored_irrelevant";
-  }
+  if (!isProEvent(event)) return "ignored_irrelevant";
 
   const update = computeUpdate(event);
   if (!update) return "ignored_irrelevant";
@@ -143,6 +228,17 @@ const handleRevenueCatWebhook = async (req, res) => {
   }
 
   try {
+    // Analytics first, and idempotent: if the user update below fails and
+    // RevenueCat retries, nothing is double-counted, and prevPeriodType is
+    // still the pre-event value (needed to recognise a trial conversion).
+    if (isProEvent(event)) {
+      const prevUser = await User.findOne({ uid: { $in: candidateUids(event) } })
+        .select("premiumPeriodType")
+        .lean();
+      const lifecycle = buildLifecycleEvent(event, prevUser?.premiumPeriodType ?? null);
+      if (lifecycle) await recordLifecycleEvent(event, lifecycle);
+    }
+
     const outcome = await processEvent(event);
     await RevenueCatEvent.updateOne({ _id: ledger._id }, { $set: { outcome } });
     console.log(
@@ -157,4 +253,4 @@ const handleRevenueCatWebhook = async (req, res) => {
   }
 };
 
-export { handleRevenueCatWebhook, computeUpdate };
+export { handleRevenueCatWebhook, computeUpdate, buildLifecycleEvent };

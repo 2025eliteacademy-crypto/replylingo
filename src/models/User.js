@@ -29,6 +29,8 @@ const userSchema = new mongoose.Schema(
     premiumStore: { type: String, default: null },
     premiumExpiresAt: { type: Date, default: null },
     premiumWillRenew: { type: Boolean, default: null },
+    // RevenueCat period_type of the latest event: "TRIAL" | "NORMAL" | "INTRO" | "PREPAID".
+    premiumPeriodType: { type: String, default: null },
     // event_timestamp_ms of the newest webhook applied, so a late/out-of-order
     // retry of an older event can never overwrite newer state.
     revenueCatLastEventMs: { type: Number, default: null },

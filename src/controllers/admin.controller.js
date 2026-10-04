@@ -1,4 +1,5 @@
 import Event from "../models/Event.js";
+import User from "../models/User.js";
 import AiCallLog from "../models/AiCallLog.js";
 import {
   PUSH_PLATFORMS,
@@ -288,6 +289,119 @@ async function computeRetention(from, to) {
   return result;
 }
 
+// Subscription / free-trial reporting, built from the server-side sub_* events
+// the RevenueCat webhook writes (see revenuecat.webhook.controller.js) — those
+// are authoritative for trial outcomes and revenue. Revenue is summed ONLY
+// from the three events that represent a real charge, so a free trial can
+// never show up as revenue. Sandbox (test) purchases are excluded unless
+// ?includeSandbox=true.
+const REVENUE_EVENTS = [EVENTS.SUB_PAID_STARTED, EVENTS.SUB_TRIAL_CONVERTED, EVENTS.SUB_RENEWED];
+const SUB_EVENTS = [
+  EVENTS.SUB_TRIAL_STARTED,
+  EVENTS.SUB_TRIAL_CANCELLED,
+  EVENTS.SUB_TRIAL_EXPIRED,
+  EVENTS.SUB_TRIAL_CONVERTED,
+  EVENTS.SUB_PAID_STARTED,
+  EVENTS.SUB_RENEWED,
+  EVENTS.SUB_CANCELLED,
+  EVENTS.SUB_EXPIRED,
+];
+
+async function computeSubscriptionStats(from, to, includeSandbox) {
+  const match = {
+    eventName: { $in: SUB_EVENTS },
+    createdAt: { $gte: from, $lte: to },
+    ...(includeSandbox ? {} : { "params.environment": { $ne: "SANDBOX" } }),
+  };
+
+  const [totalRows, splitRows, activeTrials, activeTrialsWillConvert] = await Promise.all([
+    Event.aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: "$eventName",
+          users: { $addToSet: "$distinctId" },
+          events: { $sum: 1 },
+          revenueUsd: { $sum: "$params.revenue_usd" },
+        },
+      },
+      { $project: { users: { $size: "$users" }, events: 1, revenueUsd: 1 } },
+    ]),
+    Event.aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: { name: "$eventName", platform: "$platform", plan: "$params.plan" },
+          users: { $addToSet: "$distinctId" },
+          revenueUsd: { $sum: "$params.revenue_usd" },
+        },
+      },
+      { $project: { users: { $size: "$users" }, revenueUsd: 1 } },
+    ]),
+    // Live state, not range-based: trials running right now.
+    User.countDocuments({ premium: true, premiumPeriodType: "TRIAL", premiumExpiresAt: { $gt: new Date() } }),
+    User.countDocuments({
+      premium: true,
+      premiumPeriodType: "TRIAL",
+      premiumExpiresAt: { $gt: new Date() },
+      premiumWillRenew: true,
+    }),
+  ]);
+
+  const totals = {};
+  SUB_EVENTS.forEach((name) => {
+    totals[name] = { users: 0, events: 0 };
+  });
+  let totalRevenueUsd = 0;
+  totalRows.forEach((r) => {
+    totals[r._id] = { users: r.users, events: r.events };
+    if (REVENUE_EVENTS.includes(r._id)) totalRevenueUsd += r.revenueUsd || 0;
+  });
+
+  // Per-platform and per-plan (monthly/annual) + combined breakdowns of the
+  // trial funnel, with a trial->paid conversion rate for each slice.
+  const slices = { byPlatform: {}, byPlan: {}, byPlatformPlan: {} };
+  const add = (bucket, key, name, users, revenueUsd) => {
+    const slice = (bucket[key] = bucket[key] || { revenueUsd: 0 });
+    slice[name] = (slice[name] || 0) + users;
+    if (REVENUE_EVENTS.includes(name)) slice.revenueUsd += revenueUsd || 0;
+  };
+  splitRows.forEach((r) => {
+    const platform = r._id.platform || "unknown";
+    const plan = r._id.plan || "unknown";
+    add(slices.byPlatform, platform, r._id.name, r.users, r.revenueUsd);
+    add(slices.byPlan, plan, r._id.name, r.users, r.revenueUsd);
+    add(slices.byPlatformPlan, `${platform}:${plan}`, r._id.name, r.users, r.revenueUsd);
+  });
+  Object.values(slices).forEach((bucket) =>
+    Object.values(bucket).forEach((slice) => {
+      slice.trialToPaidRate = pct(slice[EVENTS.SUB_TRIAL_CONVERTED] || 0, slice[EVENTS.SUB_TRIAL_STARTED] || 0);
+      slice.revenueUsd = Math.round(slice.revenueUsd * 100) / 100;
+    })
+  );
+
+  const started = totals[EVENTS.SUB_TRIAL_STARTED].users;
+  const converted = totals[EVENTS.SUB_TRIAL_CONVERTED].users;
+  const expired = totals[EVENTS.SUB_TRIAL_EXPIRED].users;
+
+  return {
+    includesSandbox: includeSandbox,
+    activeTrials,
+    activeTrialsWillConvert,
+    activeTrialsCancelled: activeTrials - activeTrialsWillConvert,
+    totals,
+    rates: {
+      // Of users who started a trial in this range, how many converted in the
+      // same range (understates for trials still running at range end).
+      trialToPaid: pct(converted, started),
+      // Of trials that have actually finished: converted / (converted + expired).
+      trialToPaidResolved: pct(converted, converted + expired),
+    },
+    revenueUsd: Math.round(totalRevenueUsd * 100) / 100,
+    ...slices,
+  };
+}
+
 // GET /api/admin/funnel?secret=...&from=ISO&to=ISO
 // `from`/`to` default to the trailing 30 days. Every count is a unique-user
 // (distinctId) count within the range unless noted otherwise.
@@ -322,6 +436,7 @@ const getFunnelReport = async (req, res) => {
       EVENTS.PURCHASE_COMPLETED,
       EVENTS.PURCHASE_FAILED,
       EVENTS.RESTORE_PURCHASE,
+      EVENTS.TRIAL_STARTED,
     ];
 
     const [
@@ -409,6 +524,8 @@ const getFunnelReport = async (req, res) => {
       if (firstOpen && firstOpen >= from && firstOpen <= to) firstTimeUsers += 1;
     });
     const returningUsers = openersInRange.length - firstTimeUsers;
+
+    const subscriptions = await computeSubscriptionStats(from, to, req.query.includeSandbox === "true");
 
     const failureBreakdown = {};
     ERROR_TYPES.forEach((type) => {
@@ -565,6 +682,10 @@ const getFunnelReport = async (req, res) => {
         purchaseCompleted: topLevelUnique[EVENTS.PURCHASE_COMPLETED],
         purchaseFailed: topLevelUnique[EVENTS.PURCHASE_FAILED],
         restorePurchase: topLevelUnique[EVENTS.RESTORE_PURCHASE],
+        // Client-side trial starts (paywall -> trial). NOT included in
+        // purchaseCompleted / conversionRate above, which are paid-only now.
+        trialStarted: topLevelUnique[EVENTS.TRIAL_STARTED],
+        trialConversionRate: pct(topLevelUnique[EVENTS.TRIAL_STARTED], topLevelUnique[EVENTS.PAYWALL_VIEWED]),
         clickThroughRate: pct(topLevelUnique[EVENTS.PURCHASE_STARTED], topLevelUnique[EVENTS.PAYWALL_VIEWED]),
         conversionRate: pct(topLevelUnique[EVENTS.PURCHASE_COMPLETED], topLevelUnique[EVENTS.PAYWALL_VIEWED]),
         purchaseSuccessRate: pct(topLevelUnique[EVENTS.PURCHASE_COMPLETED], topLevelUnique[EVENTS.PURCHASE_STARTED]),
@@ -581,6 +702,8 @@ const getFunnelReport = async (req, res) => {
           ])
         ),
       },
+      // Authoritative trial/subscription lifecycle + revenue (from the RevenueCat webhook).
+      subscriptions,
       failureBreakdown,
       coreSuccessFunnel,
       recordUsage,

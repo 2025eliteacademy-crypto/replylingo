@@ -37,6 +37,24 @@ export const EVENTS = {
   PURCHASE_COMPLETED: "purchase_completed",
   PURCHASE_FAILED: "purchase_failed",
   RESTORE_PURCHASE: "restore_purchase",
+  // Mobile: user started a free trial. Deliberately NOT purchase_completed, so
+  // trials never count as paid conversions in the existing funnel.
+  TRIAL_STARTED: "trial_started",
+
+  // Server-side subscription lifecycle, written by the RevenueCat webhook
+  // (revenuecat.webhook.controller.js) — the authoritative source for trial
+  // outcomes and revenue, since the app can't observe them (cancel/expire/
+  // convert happen while it's closed). distinctId = Firebase uid.
+  // Revenue lives in params.revenue_usd and is ONLY non-zero on
+  // SUB_PAID_STARTED / SUB_TRIAL_CONVERTED / SUB_RENEWED.
+  SUB_TRIAL_STARTED: "sub_trial_started",
+  SUB_TRIAL_CANCELLED: "sub_trial_cancelled",
+  SUB_TRIAL_EXPIRED: "sub_trial_expired",
+  SUB_TRIAL_CONVERTED: "sub_trial_converted",
+  SUB_PAID_STARTED: "sub_paid_started",
+  SUB_RENEWED: "sub_renewed",
+  SUB_CANCELLED: "sub_cancelled",
+  SUB_EXPIRED: "sub_expired",
 
   // Website (ReplyLingo_website) events — fired by src/lib/webTracking.ts, not
   // the mobile app. distinctId is prefixed "web_" so it can never collide with
