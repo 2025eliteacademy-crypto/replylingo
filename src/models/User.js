@@ -22,6 +22,17 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    // Subscription details mirrored from RevenueCat webhooks (see
+    // revenuecat.webhook.controller.js). `premium` above stays the single flag
+    // the rest of the backend reads.
+    premiumProductId: { type: String, default: null },
+    premiumStore: { type: String, default: null },
+    premiumExpiresAt: { type: Date, default: null },
+    premiumWillRenew: { type: Boolean, default: null },
+    // event_timestamp_ms of the newest webhook applied, so a late/out-of-order
+    // retry of an older event can never overwrite newer state.
+    revenueCatLastEventMs: { type: Number, default: null },
+
     voiceId: {
   type: String,
   default: "male",

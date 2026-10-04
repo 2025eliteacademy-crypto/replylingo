@@ -12,6 +12,7 @@ import translateRoutes from "./src/routes/translate.routes.js";
 import notificationsRoutes from "./src/routes/notifications.routes.js";
 import analyticsRoutes from "./src/routes/analytics.routes.js";
 import adminRoutes from "./src/routes/admin.routes.js";
+import revenueCatWebhookRoutes from "./src/routes/revenuecat.webhook.routes.js";
 
 
 // Connect MongoDB
@@ -42,6 +43,7 @@ app.use("/api/translate", translateRoutes);
 app.use("/api/notifications", notificationsRoutes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/webhooks/revenuecat", revenueCatWebhookRoutes);
 
 // ======================
 // 404 Handler
