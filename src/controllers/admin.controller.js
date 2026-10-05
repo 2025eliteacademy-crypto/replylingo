@@ -314,7 +314,7 @@ async function computeSubscriptionStats(from, to, includeSandbox) {
     ...(includeSandbox ? {} : { "params.environment": { $ne: "SANDBOX" } }),
   };
 
-  const [totalRows, splitRows, activeTrials, activeTrialsWillConvert] = await Promise.all([
+  const [totalRows, splitRows, activeTrialRows] = await Promise.all([
     Event.aggregate([
       { $match: match },
       {
@@ -339,13 +339,15 @@ async function computeSubscriptionStats(from, to, includeSandbox) {
       { $project: { users: { $size: "$users" }, revenueUsd: 1 } },
     ]),
     // Live state, not range-based: trials running right now.
-    User.countDocuments({ premium: true, premiumPeriodType: "TRIAL", premiumExpiresAt: { $gt: new Date() } }),
-    User.countDocuments({
-      premium: true,
-      premiumPeriodType: "TRIAL",
-      premiumExpiresAt: { $gt: new Date() },
-      premiumWillRenew: true,
-    }),
+    User.aggregate([
+      { $match: { premium: true, premiumPeriodType: "TRIAL", premiumExpiresAt: { $gt: new Date() } } },
+      {
+        $group: {
+          _id: { store: "$premiumStore", product: "$premiumProductId", willRenew: "$premiumWillRenew" },
+          count: { $sum: 1 },
+        },
+      },
+    ]),
   ]);
 
   const totals = {};
@@ -373,8 +375,37 @@ async function computeSubscriptionStats(from, to, includeSandbox) {
     add(slices.byPlan, plan, r._id.name, r.users, r.revenueUsd);
     add(slices.byPlatformPlan, `${platform}:${plan}`, r._id.name, r.users, r.revenueUsd);
   });
+  // Active trials right now (live state, not range-based), by platform/plan.
+  // willConvert = auto-renew still on; the rest have cancelled and will lapse.
+  const PLATFORM_BY_STORE = { APP_STORE: "ios", MAC_APP_STORE: "ios", PLAY_STORE: "android" };
+  const planOf = (productId) =>
+    /year|annual/i.test(productId || "") ? "annual" : /month/i.test(productId || "") ? "monthly" : "unknown";
+  let activeTrials = 0;
+  let activeTrialsWillConvert = 0;
+  const addActive = (bucket, key, count, willConvert) => {
+    const slice = (bucket[key] = bucket[key] || { revenueUsd: 0 });
+    slice.activeTrials = (slice.activeTrials || 0) + count;
+    if (willConvert) slice.activeTrialsWillConvert = (slice.activeTrialsWillConvert || 0) + count;
+  };
+  activeTrialRows.forEach((r) => {
+    const platform = PLATFORM_BY_STORE[r._id.store] || "unknown";
+    const plan = planOf(r._id.product);
+    const willConvert = r._id.willRenew === true;
+    activeTrials += r.count;
+    if (willConvert) activeTrialsWillConvert += r.count;
+    addActive(slices.byPlatform, platform, r.count, willConvert);
+    addActive(slices.byPlan, plan, r.count, willConvert);
+    addActive(slices.byPlatformPlan, `${platform}:${plan}`, r.count, willConvert);
+  });
+
   Object.values(slices).forEach((bucket) =>
     Object.values(bucket).forEach((slice) => {
+      // Every slice always carries every counter so the UI never sees undefined.
+      SUB_EVENTS.forEach((name) => {
+        slice[name] = slice[name] || 0;
+      });
+      slice.activeTrials = slice.activeTrials || 0;
+      slice.activeTrialsWillConvert = slice.activeTrialsWillConvert || 0;
       slice.trialToPaidRate = pct(slice[EVENTS.SUB_TRIAL_CONVERTED] || 0, slice[EVENTS.SUB_TRIAL_STARTED] || 0);
       slice.revenueUsd = Math.round(slice.revenueUsd * 100) / 100;
     })
@@ -437,6 +468,8 @@ const getFunnelReport = async (req, res) => {
       EVENTS.PURCHASE_FAILED,
       EVENTS.RESTORE_PURCHASE,
       EVENTS.TRIAL_STARTED,
+      EVENTS.PLAN_SELECTED,
+      EVENTS.PAYWALL_DISMISSED,
     ];
 
     const [
@@ -685,6 +718,8 @@ const getFunnelReport = async (req, res) => {
         // Client-side trial starts (paywall -> trial). NOT included in
         // purchaseCompleted / conversionRate above, which are paid-only now.
         trialStarted: topLevelUnique[EVENTS.TRIAL_STARTED],
+        planSelected: topLevelUnique[EVENTS.PLAN_SELECTED],
+        paywallDismissed: topLevelUnique[EVENTS.PAYWALL_DISMISSED],
         trialConversionRate: pct(topLevelUnique[EVENTS.TRIAL_STARTED], topLevelUnique[EVENTS.PAYWALL_VIEWED]),
         clickThroughRate: pct(topLevelUnique[EVENTS.PURCHASE_STARTED], topLevelUnique[EVENTS.PAYWALL_VIEWED]),
         conversionRate: pct(topLevelUnique[EVENTS.PURCHASE_COMPLETED], topLevelUnique[EVENTS.PAYWALL_VIEWED]),
