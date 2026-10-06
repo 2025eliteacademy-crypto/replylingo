@@ -1,5 +1,6 @@
 import User from "../models/User.js";
 import Usage from "../models/Usage.js";
+import PurchaseSurvey from "../models/PurchaseSurvey.js";
 import { isValidVoiceId, normalizeVoiceId, DEFAULT_VOICE_ID, VOICE_PERSONAS } from "../config/voiceCatalog.js";
 import { getSubscriberPremiumStatus } from "../services/revenuecat.service.js";
 import { getVoicePreviewBuffer } from "../services/voicePreview.service.js";
@@ -262,6 +263,10 @@ const deleteAccount = async (req, res) => {
     // Delete Usage document
     const usageDeleteResult = await Usage.deleteOne({ uid });
     console.log(`[deleteAccount] Usage deletion result:`, usageDeleteResult);
+
+    // Delete any checkout-abandonment survey answers (they're tied to the uid).
+    const surveyDeleteResult = await PurchaseSurvey.deleteMany({ uid });
+    console.log(`[deleteAccount] Survey deletion result:`, surveyDeleteResult);
 
     res.status(200).json({
       success: true,

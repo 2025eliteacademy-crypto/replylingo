@@ -1,6 +1,8 @@
 import Event from "../models/Event.js";
 import User from "../models/User.js";
 import AiCallLog from "../models/AiCallLog.js";
+import PurchaseSurvey from "../models/PurchaseSurvey.js";
+import { SURVEY_REASONS, SURVEY_USE_CASES, SURVEY_PLATFORMS } from "../config/purchaseSurvey.js";
 import {
   PUSH_PLATFORMS,
   getPushAudienceCounts,
@@ -39,10 +41,18 @@ function parseRange(req) {
   return { from, to };
 }
 
+// Translation analytics must report REAL translations only. The in-app demo
+// ("Try the sample") tags its audio_selected / translation_succeeded events
+// with params.source = "sample"; events with no source (older builds, and
+// every failure event) are real. These are passed as the optional `extraMatch`
+// argument of the helpers below.
+const REAL_ONLY = { "params.source": { $ne: "sample" } };
+const SAMPLE_ONLY = { "params.source": "sample" };
+
 // Unique-distinctId count per event name, in range.
-async function uniqueUserCounts(eventNames, from, to) {
+async function uniqueUserCounts(eventNames, from, to, extraMatch = {}) {
   const rows = await Event.aggregate([
-    { $match: { eventName: { $in: eventNames }, createdAt: { $gte: from, $lte: to } } },
+    { $match: { eventName: { $in: eventNames }, createdAt: { $gte: from, $lte: to }, ...extraMatch } },
     { $group: { _id: { eventName: "$eventName", distinctId: "$distinctId" } } },
     { $group: { _id: "$_id.eventName", count: { $sum: 1 } } },
   ]);
@@ -53,10 +63,21 @@ async function uniqueUserCounts(eventNames, from, to) {
   return map;
 }
 
-// Raw row count per event name, in range (not deduped by user).
-async function totalCounts(eventNames, from, to) {
+// Distinct users with ANY of the given events (a user with several of them is
+// counted once — unlike summing uniqueUserCounts values).
+async function uniqueUsersAcross(eventNames, from, to, extraMatch = {}) {
   const rows = await Event.aggregate([
-    { $match: { eventName: { $in: eventNames }, createdAt: { $gte: from, $lte: to } } },
+    { $match: { eventName: { $in: eventNames }, createdAt: { $gte: from, $lte: to }, ...extraMatch } },
+    { $group: { _id: "$distinctId" } },
+    { $count: "count" },
+  ]);
+  return rows[0]?.count || 0;
+}
+
+// Raw row count per event name, in range (not deduped by user).
+async function totalCounts(eventNames, from, to, extraMatch = {}) {
+  const rows = await Event.aggregate([
+    { $match: { eventName: { $in: eventNames }, createdAt: { $gte: from, $lte: to }, ...extraMatch } },
     { $group: { _id: "$eventName", count: { $sum: 1 } } },
   ]);
   const map = Object.fromEntries(eventNames.map((n) => [n, 0]));
@@ -68,9 +89,9 @@ async function totalCounts(eventNames, from, to) {
 
 // Unique-user counts for one event, bucketed by a params field (e.g.
 // onboarding slide number, permission type, signup method, error type).
-async function uniqueUserCountsByParam(eventName, paramKey, from, to) {
+async function uniqueUserCountsByParam(eventName, paramKey, from, to, extraMatch = {}) {
   const rows = await Event.aggregate([
-    { $match: { eventName, createdAt: { $gte: from, $lte: to } } },
+    { $match: { eventName, createdAt: { $gte: from, $lte: to }, ...extraMatch } },
     { $group: { _id: { val: `$params.${paramKey}`, distinctId: "$distinctId" } } },
     { $group: { _id: "$_id.val", count: { $sum: 1 } } },
   ]);
@@ -81,9 +102,9 @@ async function uniqueUserCountsByParam(eventName, paramKey, from, to) {
   return map;
 }
 
-async function totalCountsByParam(eventName, paramKey, from, to) {
+async function totalCountsByParam(eventName, paramKey, from, to, extraMatch = {}) {
   const rows = await Event.aggregate([
-    { $match: { eventName, createdAt: { $gte: from, $lte: to } } },
+    { $match: { eventName, createdAt: { $gte: from, $lte: to }, ...extraMatch } },
     { $group: { _id: `$params.${paramKey}`, count: { $sum: 1 } } },
   ]);
   const map = {};
@@ -95,9 +116,9 @@ async function totalCountsByParam(eventName, paramKey, from, to) {
 
 // Same idea as uniqueUserCountsByParam, but bucketed by a top-level Event
 // field (platform, appVersion) instead of a params.* value.
-async function uniqueUserCountsByField(eventName, field, from, to) {
+async function uniqueUserCountsByField(eventName, field, from, to, extraMatch = {}) {
   const rows = await Event.aggregate([
-    { $match: { eventName, createdAt: { $gte: from, $lte: to } } },
+    { $match: { eventName, createdAt: { $gte: from, $lte: to }, ...extraMatch } },
     { $group: { _id: { val: `$${field}`, distinctId: "$distinctId" } } },
     { $group: { _id: "$_id.val", count: { $sum: 1 } } },
   ]);
@@ -184,7 +205,11 @@ async function computeDailyTrend(from, to) {
   const rows = await Event.aggregate([
     {
       $match: {
-        eventName: { $in: [EVENTS.APP_OPEN, EVENTS.SIGNUP_COMPLETED, EVENTS.TRANSLATION_SUCCEEDED] },
+        $or: [
+          { eventName: { $in: [EVENTS.APP_OPEN, EVENTS.SIGNUP_COMPLETED] } },
+          // Real translations only — the sample demo is not a translation.
+          { eventName: EVENTS.TRANSLATION_SUCCEEDED, ...REAL_ONLY },
+        ],
         createdAt: { $gte: trendFrom, $lte: to },
       },
     },
@@ -453,13 +478,8 @@ const getFunnelReport = async (req, res) => {
       EVENTS.SIGNUP_STARTED,
       EVENTS.SIGNUP_COMPLETED,
       EVENTS.TRANSLATE_SCREEN_OPENED,
-      EVENTS.AUDIO_SELECTED,
-      EVENTS.AUDIO_UPLOAD_STARTED,
-      EVENTS.AUDIO_UPLOAD_SUCCEEDED,
-      EVENTS.AUDIO_UPLOAD_FAILED,
-      EVENTS.TRANSLATION_STARTED,
-      EVENTS.TRANSLATION_SUCCEEDED,
-      EVENTS.TRANSLATION_FAILED,
+      // audio_selected / translation_* are NOT here: they're counted below
+      // with REAL_ONLY so the sample demo never inflates them.
       EVENTS.SAMPLE_VOICE_TAPPED,
       EVENTS.WHATSAPP_TUTORIAL_TAPPED,
       EVENTS.PAYWALL_VIEWED,
@@ -503,6 +523,11 @@ const getFunnelReport = async (req, res) => {
       platformPurchaseFailed,
       platformCancelled,
       dailyTrend,
+      realTranslationUnique,
+      sampleTranslationUnique,
+      translationEventTotals,
+      sampleEventTotals,
+      failedUsers,
     ] = await Promise.all([
       uniqueUserCounts(topLevelEventNames, from, to),
       totalCounts([EVENTS.APP_OPEN], from, to),
@@ -513,22 +538,24 @@ const getFunnelReport = async (req, res) => {
       totalCountsByParam(EVENTS.PERMISSION_GRANTED, "type", from, to),
       totalCountsByParam(EVENTS.PERMISSION_DENIED, "type", from, to),
       uniqueUserCountsByParam(EVENTS.SCREEN_REACHED, "screen", from, to),
-      uniqueUserCountsByParam(EVENTS.AUDIO_UPLOAD_FAILED, "error_type", from, to),
-      uniqueUserCountsByParam(EVENTS.TRANSLATION_FAILED, "error_type", from, to),
+      // Event counts (not unique users) so the failure total equals the number
+      // of failed requests, matching translationEvents.failed below.
+      totalCountsByParam(EVENTS.AUDIO_UPLOAD_FAILED, "error_type", from, to),
+      totalCountsByParam(EVENTS.TRANSLATION_FAILED, "error_type", from, to),
       uniqueUserCountsByParam(EVENTS.PAYWALL_VIEWED, "source", from, to),
       uniqueUserCountsByParam(EVENTS.PURCHASE_FAILED, "error_type", from, to),
       computeRetention(from, to),
       // Record tab's pipeline calls always pass screen: "mic" (see
       // useTranslateFlow2.js) — distinct from the Translate tab's "translate".
-      uniqueUserCountsByParam(EVENTS.AUDIO_SELECTED, "screen", from, to),
-      uniqueUserCountsByParam(EVENTS.TRANSLATION_STARTED, "screen", from, to),
-      uniqueUserCountsByParam(EVENTS.TRANSLATION_SUCCEEDED, "screen", from, to),
+      uniqueUserCountsByParam(EVENTS.AUDIO_SELECTED, "screen", from, to, REAL_ONLY),
+      uniqueUserCountsByParam(EVENTS.TRANSLATION_STARTED, "screen", from, to, REAL_ONLY),
+      uniqueUserCountsByParam(EVENTS.TRANSLATION_SUCCEEDED, "screen", from, to, REAL_ONLY),
       uniqueUserCountsByField(EVENTS.APP_OPEN, "platform", from, to),
-      uniqueUserCountsByField(EVENTS.TRANSLATION_STARTED, "platform", from, to),
-      uniqueUserCountsByField(EVENTS.TRANSLATION_SUCCEEDED, "platform", from, to),
+      uniqueUserCountsByField(EVENTS.TRANSLATION_STARTED, "platform", from, to, REAL_ONLY),
+      uniqueUserCountsByField(EVENTS.TRANSLATION_SUCCEEDED, "platform", from, to, REAL_ONLY),
       uniqueUserCountsByField(EVENTS.APP_OPEN, "appVersion", from, to),
-      uniqueUserCountsByField(EVENTS.TRANSLATION_STARTED, "appVersion", from, to),
-      uniqueUserCountsByField(EVENTS.TRANSLATION_SUCCEEDED, "appVersion", from, to),
+      uniqueUserCountsByField(EVENTS.TRANSLATION_STARTED, "appVersion", from, to, REAL_ONLY),
+      uniqueUserCountsByField(EVENTS.TRANSLATION_SUCCEEDED, "appVersion", from, to, REAL_ONLY),
       uniqueUserCountsByField(EVENTS.PAYWALL_VIEWED, "platform", from, to),
       totalCountsByField(EVENTS.PAYWALL_VIEWED, "platform", from, to),
       uniqueUserCountsByField(EVENTS.PURCHASE_STARTED, "platform", from, to),
@@ -536,7 +563,60 @@ const getFunnelReport = async (req, res) => {
       uniqueUserCountsByField(EVENTS.PURCHASE_FAILED, "platform", from, to),
       uniqueUserCountsByFieldAndParamValue(EVENTS.PURCHASE_FAILED, "platform", "error_type", "user_cancelled", from, to),
       computeDailyTrend(from, to),
+      // Real translations only (sample demo excluded) — unique users per step.
+      uniqueUserCounts(
+        [
+          EVENTS.AUDIO_SELECTED,
+          EVENTS.TRANSLATION_STARTED,
+          EVENTS.TRANSLATION_SUCCEEDED,
+          EVENTS.TRANSLATION_FAILED,
+        ],
+        from,
+        to,
+        REAL_ONLY,
+      ),
+      uniqueUserCounts([EVENTS.TRANSLATION_SUCCEEDED], from, to, SAMPLE_ONLY),
+      // Real translations — raw event counts. A failed request fires exactly
+      // one of translation_failed / audio_upload_failed (see pipeline.js), so
+      // their sum is the failed-request count.
+      totalCounts(
+        [
+          EVENTS.TRANSLATION_STARTED,
+          EVENTS.TRANSLATION_SUCCEEDED,
+          EVENTS.TRANSLATION_FAILED,
+          EVENTS.AUDIO_UPLOAD_FAILED,
+        ],
+        from,
+        to,
+        REAL_ONLY,
+      ),
+      totalCounts([EVENTS.TRANSLATION_SUCCEEDED], from, to, SAMPLE_ONLY),
+      uniqueUsersAcross([EVENTS.TRANSLATION_FAILED, EVENTS.AUDIO_UPLOAD_FAILED], from, to),
     ]);
+
+    // Replace the translation-related unique-user counts with the real-only
+    // versions (these keys were deliberately left out of topLevelEventNames).
+    Object.assign(topLevelUnique, realTranslationUnique);
+
+    const translationAttempts = translationEventTotals[EVENTS.TRANSLATION_STARTED];
+    const translationSuccesses = translationEventTotals[EVENTS.TRANSLATION_SUCCEEDED];
+    const translationFailures =
+      translationEventTotals[EVENTS.TRANSLATION_FAILED] +
+      translationEventTotals[EVENTS.AUDIO_UPLOAD_FAILED];
+    const translationEvents = {
+      attempts: translationAttempts,
+      succeeded: translationSuccesses,
+      failed: translationFailures,
+      // Attempts that ended with neither success nor failure: blocked by the
+      // free limit, or the app was closed mid-request.
+      noOutcome: Math.max(0, translationAttempts - translationSuccesses - translationFailures),
+      // Of requests that finished (succeeded or failed) — free-limit blocks
+      // aren't failures, so they don't drag this down.
+      successRate: pct(translationSuccesses, translationSuccesses + translationFailures),
+      // The in-app sample demo, reported separately and never mixed in above.
+      sampleRuns: sampleEventTotals[EVENTS.TRANSLATION_SUCCEEDED],
+      sampleUsers: sampleTranslationUnique[EVENTS.TRANSLATION_SUCCEEDED],
+    };
 
     const appOpenUnique = topLevelUnique[EVENTS.APP_OPEN];
 
@@ -690,7 +770,10 @@ const getFunnelReport = async (req, res) => {
         audioSelected: topLevelUnique[EVENTS.AUDIO_SELECTED],
         translationAttempted: topLevelUnique[EVENTS.TRANSLATION_STARTED],
         translationSucceeded: topLevelUnique[EVENTS.TRANSLATION_SUCCEEDED],
-        translationFailed: topLevelUnique[EVENTS.TRANSLATION_FAILED],
+        // Users with any failed request (translation OR upload stage).
+        translationFailed: failedUsers,
+        // Real translations as event counts + the separate sample-demo tally.
+        translationEvents,
         screensReached: PRODUCT_SCREENS.reduce((acc, screen) => {
           acc[screen] = productScreensUnique[screen] || 0;
           return acc;
@@ -908,8 +991,14 @@ const getUserJourney = async (req, res) => {
     }
 
     const appOpens = events.filter((e) => e.eventName === EVENTS.APP_OPEN);
-    const translationAttempts = events.filter((e) => e.eventName === EVENTS.TRANSLATION_STARTED);
-    const translationSuccesses = events.filter((e) => e.eventName === EVENTS.TRANSLATION_SUCCEEDED);
+    // Real translations only — the sample demo isn't an attempt/success.
+    const isSample = (e) => e.params?.source === "sample";
+    const translationAttempts = events.filter(
+      (e) => e.eventName === EVENTS.TRANSLATION_STARTED && !isSample(e),
+    );
+    const translationSuccesses = events.filter(
+      (e) => e.eventName === EVENTS.TRANSLATION_SUCCEEDED && !isSample(e),
+    );
 
     const summary = {
       distinctId: events[0].distinctId,
@@ -1027,4 +1116,122 @@ const getAiUsageReport = async (req, res) => {
   }
 };
 
-export { getFunnelReport, getUserJourney, getAiUsageReport, getTrafficReport, getNotificationAudience, sendNotification };
+// GET /api/admin/purchase-survey?secret=...&from=ISO&to=ISO
+// "Why are people who start checkout not paying?" — answers to the
+// post-purchase-abandonment survey (PurchaseSurvey collection), plus how often
+// the survey was shown/skipped (from the Event log). Kept entirely separate
+// from the translation/funnel report.
+const getPurchaseSurveyReport = async (req, res) => {
+  if (!isAuthorized(req)) {
+    return res.status(401).json({ success: false, message: "Unauthorized." });
+  }
+
+  try {
+    const { from, to } = parseRange(req);
+    const range = { createdAt: { $gte: from, $lte: to } };
+
+    const groupCount = async (field) => {
+      const rows = await PurchaseSurvey.aggregate([
+        { $match: range },
+        { $group: { _id: `$${field}`, count: { $sum: 1 } } },
+      ]);
+      return Object.fromEntries(rows.map((r) => [r._id === null ? "unknown" : String(r._id), r.count]));
+    };
+
+    const [
+      total,
+      withFeedback,
+      byReasonRaw,
+      byPlatformRaw,
+      byPlanRaw,
+      byUseCaseRaw,
+      reasonByPlatformRows,
+      recent,
+      surveyEvents,
+    ] = await Promise.all([
+      PurchaseSurvey.countDocuments(range),
+      PurchaseSurvey.countDocuments({ ...range, feedback: { $ne: "" } }),
+      groupCount("reason"),
+      groupCount("platform"),
+      groupCount("plan"),
+      groupCount("useCase"),
+      PurchaseSurvey.aggregate([
+        { $match: range },
+        { $group: { _id: { platform: "$platform", reason: "$reason" }, count: { $sum: 1 } } },
+      ]),
+      PurchaseSurvey.find({ ...range, feedback: { $ne: "" } })
+        .sort({ createdAt: -1 })
+        .limit(50)
+        .select("feedback reason useCase platform plan appVersion createdAt -_id")
+        .lean(),
+      totalCounts(
+        [
+          EVENTS.PURCHASE_SURVEY_SHOWN,
+          EVENTS.PURCHASE_SURVEY_SUBMITTED,
+          EVENTS.PURCHASE_SURVEY_SKIPPED,
+        ],
+        from,
+        to,
+      ),
+    ]);
+
+    // Every known answer is listed (even at 0) so the report shape is stable;
+    // anything unexpected is kept under its own key rather than dropped.
+    const withPct = (raw, knownKeys, denominator) => {
+      const keys = [...knownKeys, ...Object.keys(raw).filter((k) => !knownKeys.includes(k))];
+      return Object.fromEntries(
+        keys.map((key) => [key, { count: raw[key] || 0, pct: pct(raw[key] || 0, denominator) }]),
+      );
+    };
+
+    const answeredUseCase = total - (byUseCaseRaw.unknown || 0);
+    const reasonByPlatform = {};
+    reasonByPlatformRows.forEach((r) => {
+      const { platform, reason } = r._id;
+      if (!reasonByPlatform[platform]) reasonByPlatform[platform] = {};
+      reasonByPlatform[platform][reason] = r.count;
+    });
+
+    const shown = surveyEvents[EVENTS.PURCHASE_SURVEY_SHOWN];
+
+    return res.status(200).json({
+      success: true,
+      range: { from, to },
+      totals: {
+        responses: total,
+        withFeedback,
+        // How many of the people shown the survey answered it.
+        shown,
+        submitted: surveyEvents[EVENTS.PURCHASE_SURVEY_SUBMITTED],
+        skipped: surveyEvents[EVENTS.PURCHASE_SURVEY_SKIPPED],
+        // Capped: answers from before the shown-event existed can outnumber it.
+        responseRate: Math.min(100, pct(total, shown)),
+      },
+      byReason: withPct(byReasonRaw, SURVEY_REASONS, total),
+      byPlatform: withPct(byPlatformRaw, SURVEY_PLATFORMS, total),
+      byPlan: withPct(byPlanRaw, ["annual", "monthly"], total),
+      // Use case is optional, so its percentages are of those who answered it.
+      byUseCase: withPct(
+        Object.fromEntries(Object.entries(byUseCaseRaw).filter(([k]) => k !== "unknown")),
+        SURVEY_USE_CASES,
+        answeredUseCase,
+      ),
+      useCaseAnswered: answeredUseCase,
+      reasonByPlatform,
+      recentFeedback: recent.map((r) => ({
+        text: r.feedback,
+        reason: r.reason,
+        useCase: r.useCase || null,
+        platform: r.platform,
+        plan: r.plan || null,
+        appVersion: r.appVersion || null,
+        at: r.createdAt,
+      })),
+    });
+  } catch (error) {
+    console.error("[admin] Purchase survey report failed:", error);
+    return res.status(500).json({ success: false, message: "Failed to build purchase survey report." });
+  }
+};
+
+export { getFunnelReport, getUserJourney, getAiUsageReport, getTrafficReport, getNotificationAudience, sendNotification, getPurchaseSurveyReport };

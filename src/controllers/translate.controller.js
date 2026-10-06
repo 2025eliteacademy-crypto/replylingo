@@ -107,7 +107,11 @@ errorCode: "AUDIO_TOO_LONG",
     }
 
     console.log("VOICE USED:", voiceId);
-    let audioBuffer;
+    // generateTranslatedSpeech returns null (never throws for a provider
+    // failure) when voice can't be produced: the transcript + translation are
+    // still returned below as a text-only result. The try/catch only guards
+    // against unexpected bugs, which degrade the same way.
+    let audioBuffer = null;
     try {
       audioBuffer = await generateTranslatedSpeech(
         translatedText,
@@ -116,8 +120,8 @@ errorCode: "AUDIO_TOO_LONG",
         voiceId
       );
     } catch (err) {
-      err.errorCode = err.errorCode || "GOOGLE_TTS_ERROR";
-      throw err;
+      console.error("Unexpected TTS error, degrading to text-only:", err.message);
+      audioBuffer = null;
     }
 
     // Spoken branding tag: appended only to the audio that's actually
@@ -149,16 +153,23 @@ errorCode: "AUDIO_TOO_LONG",
     let remainingFreeTranslations = null;
 
     if (req.usage) {
-      const usageCost = req.body.screen === "translate" ? 0.5 : 1;
-      // Premium usage feeds only the daily abuse cap; free usage is the
-      // lifetime allowance (see models/Usage.js).
-      if (isPremium) {
-        req.usage.premiumDailyCredits = (req.usage.premiumDailyCredits || 0) + usageCost;
-      } else {
-        req.usage.usageCredits += usageCost;
+      // A reply with no voice has nothing the user can send, so it doesn't
+      // use up a credit. (An inbound translation still does — the translated
+      // text is its main value.)
+      const skipCharge = isReply && !finalAudioBuffer;
+
+      if (!skipCharge) {
+        const usageCost = req.body.screen === "translate" ? 0.5 : 1;
+        // Premium usage feeds only the daily abuse cap; free usage is the
+        // lifetime allowance (see models/Usage.js).
+        if (isPremium) {
+          req.usage.premiumDailyCredits = (req.usage.premiumDailyCredits || 0) + usageCost;
+        } else {
+          req.usage.usageCredits += usageCost;
+        }
+        req.usage.estimatedCostUsd = (req.usage.estimatedCostUsd || 0) + ESTIMATED_COST_PER_CALL_USD;
+        await req.usage.save();
       }
-      req.usage.estimatedCostUsd = (req.usage.estimatedCostUsd || 0) + ESTIMATED_COST_PER_CALL_USD;
-      await req.usage.save();
 
       if (!isPremium) {
         remainingFreeTranslations = Math.max(

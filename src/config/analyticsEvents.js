@@ -37,6 +37,12 @@ export const EVENTS = {
   PURCHASE_COMPLETED: "purchase_completed",
   PURCHASE_FAILED: "purchase_failed",
   RESTORE_PURCHASE: "restore_purchase",
+  // Post-purchase-abandonment survey (shown only after a user cancels checkout).
+  // Deliberately separate from the translation/funnel events above; the answers
+  // themselves live in the PurchaseSurvey collection, not here.
+  PURCHASE_SURVEY_SHOWN: "purchase_survey_shown",
+  PURCHASE_SURVEY_SUBMITTED: "purchase_survey_submitted",
+  PURCHASE_SURVEY_SKIPPED: "purchase_survey_skipped",
   // Mobile: user started a free trial. Deliberately NOT purchase_completed, so
   // trials never count as paid conversions in the existing funnel.
   TRIAL_STARTED: "trial_started",
